@@ -7,9 +7,10 @@ import time
 import json
 import os
 import tensorflow as tf
-from tensorflow.keras.models import load_model
 
-DEFAULT_MODEL_PATH = "model/plantvillage_phase3_epoch25_FINAL.h5"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, "model.keras")
+
 
 # ─── Session State Initialization (FIXED) ─────────────────────────────────────
 if "history" not in st.session_state:
@@ -479,19 +480,10 @@ hr { border-color: var(--green-pale); opacity: 0.5; }
 
 
 # ─── Helper Functions ──────────────────────────────────────────────────────────
-
-def load_model_cached():
-    """Load the TF model with caching."""
-    import tensorflow as tf
-    model_path = st.session_state.get("model_path", "")
-    if not model_path or not os.path.exists(model_path):
-        return None
+@st.cache_resource
+def load_model(path):
     try:
-        model = tf.keras.models.load_model(
-            "model.h5",
-            compile=False,
-            safe_mode=False
-)
+        model = tf.keras.models.load_model(path)
         return model
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
@@ -589,11 +581,12 @@ import tensorflow as tf
 if not st.session_state.model_loaded:
     if os.path.exists(DEFAULT_MODEL_PATH):
         with st.spinner("🔄 Loading default model..."):
-            try:
-                st.session_state.model = tf.keras.models.load_model(DEFAULT_MODEL_PATH)
+            model = load_model(DEFAULT_MODEL_PATH)
+            if model:
+                st.session_state.model = model
                 st.session_state.model_loaded = True
-            except Exception as e:
-                st.error(f"Error loading default model: {e}")
+    else:
+        st.warning("⚠️ Default model not found in app directory.")
 
 
 # ─── Sidebar ───────────────────────────────────────────────────────────────────
@@ -603,7 +596,7 @@ with st.sidebar:
 
     st.markdown("### ⚙️ Model Setup")
     model_path_input = st.text_input(
-    "Model File Path (.h5)",
+    "Model File Path (.keras)",
     value=DEFAULT_MODEL_PATH,   # 👈 auto-filled
     )
 
@@ -614,8 +607,11 @@ with st.sidebar:
                 st.session_state.model_path_input = model_path_input
                 import tensorflow as tf
                 try:
-                    st.session_state.model = tf.keras.models.load_model(model_path_input)
-                    st.session_state.model_loaded = True
+                    model = load_model(model_path_input)
+                    if model:
+                        st.session_state.model = model
+                        st.session_state.model_loaded = True
+                        st.success("✅ Model loaded!")
                     st.success("✅ Model loaded!")
                 except Exception as e:
                     st.error(f"❌ {e}")
@@ -677,7 +673,8 @@ with st.sidebar:
 
 
 # ─── Main Content ──────────────────────────────────────────────────────────────
-
+st.sidebar.write("Model path:", model_path_input)
+st.sidebar.write("Exists:", os.path.exists(model_path_input))
 # Header
 st.markdown("""
 <div class="app-header">
@@ -751,7 +748,7 @@ with tab1:
             <div style='background:#fff8e1;border-radius:12px;padding:1.2rem;border:1.5px solid #e9c46a;'>
                 <b>Quick Setup:</b><br>
                 1. Open the sidebar (left panel)<br>
-                2. Enter the path to your <code>plantvillage_phase3_epoch25_FINAL.h5</code> file<br>
+                2. Enter the path to your <code>model.keras</code> file<br>
                 3. Click <b>Load Model</b><br>
                 4. Come back and click <b>Analyze Leaf</b>
             </div>
@@ -1030,7 +1027,7 @@ with tab4:
     """, unsafe_allow_html=True)
 
     steps = [
-        ("1️⃣", "Load Your Model", "In the sidebar, enter the full path to your trained `.h5` model file (e.g., `/path/to/plantvillage_phase3_epoch25_FINAL.h5`) and click **Load Model**."),
+        ("1️⃣", "Load Your Model", "In the sidebar, enter the full path to your trained `.h5` model file (e.g., `/path/to/model.keras`) and click **Load Model**."),
         ("2️⃣", "Upload a Leaf Image", "Go to the **Diagnose** tab, upload a clear photo of the plant leaf you want to analyze. Supported formats: JPG, PNG, WEBP."),
         ("3️⃣", "Analyze", "Click **Analyze Leaf** and wait for the AI to process the image. Results appear within seconds."),
         ("4️⃣", "Read the Diagnosis", "The app shows the detected plant, disease (or healthy status), confidence level, and detailed treatment/prevention recommendations."),

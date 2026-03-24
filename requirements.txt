@@ -1,8 +1,5 @@
 streamlit==1.32.0
-tensorflow-cpu==2.12.0
-numpy==1.23.5
-pillow==9.5.0
-pymongo==4.6.1
-requests==2.31.0
-opencv-python-headless==4.9.0.80
-h5py==3.8.0
+tensorflow-cpu==2.15.0
+numpy
+pillow
+opencv-python-headless
