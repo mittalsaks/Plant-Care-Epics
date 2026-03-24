@@ -1,6 +1,7 @@
-streamlit
-tensorflow
-numpy
-Pillow
+streamlit==1.32.0
+tensorflow==2.12.0
+numpy==1.23.5
+pillow
+pymongo
+requests
 opencv-python-headless
-scikit-learn
