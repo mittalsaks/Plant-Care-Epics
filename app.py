@@ -499,15 +499,14 @@ def preprocess_image(img: Image.Image, target_size=(224, 224)):
 def predict(model, img_array):
     import tensorflow as tf
 
+    infer = model.signatures["serving_default"]
+
     img_tensor = tf.convert_to_tensor(img_array)
 
     preds = infer(img_tensor)
-
-    # extract output (depends on model)
     preds = list(preds.values())[0].numpy()[0]
-    top5_idx = np.argsort(preds)[::-1][:5]
-    results = [(CLASS_LABELS[i], float(preds[i]) * 100) for i in top5_idx]
-    return results, preds
+
+    return preds
 
 def format_class_name(raw: str) -> tuple[str, str]:
     """Returns (plant, condition)."""
