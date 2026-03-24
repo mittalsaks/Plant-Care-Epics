@@ -483,7 +483,7 @@ hr { border-color: var(--green-pale); opacity: 0.5; }
 @st.cache_resource
 def load_model(path):
     try:
-        model = tf.keras.models.load_model(path)
+        model = tf.keras.models.load_model("model_tf")
         return model
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
