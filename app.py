@@ -6,6 +6,7 @@ import base64
 import time
 import json
 import os
+from tensorflow.keras.models import load_model
 
 DEFAULT_MODEL_PATH = "model/plantvillage_phase3_epoch25_FINAL.h5"
 
@@ -485,7 +486,7 @@ def load_model_cached():
     if not model_path or not os.path.exists(model_path):
         return None
     try:
-        model = tf.keras.models.load_model(model_path)
+        model = load_model("plantvillage_phase3_epoch25_FINAL.h5", compile=False)
         return model
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
