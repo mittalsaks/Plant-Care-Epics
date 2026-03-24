@@ -484,6 +484,7 @@ hr { border-color: var(--green-pale); opacity: 0.5; }
 def load_model(path):
     try:
         model = tf.keras.models.load_model("model_tf")
+        infer = model.signatures["serving_default"]
         return model
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
@@ -496,7 +497,14 @@ def preprocess_image(img: Image.Image, target_size=(224, 224)):
     return np.expand_dims(arr, axis=0)
 
 def predict(model, img_array):
-    preds = model.predict(img_array, verbose=0)[0]
+    import tensorflow as tf
+
+    img_tensor = tf.convert_to_tensor(img_array)
+
+    preds = infer(img_tensor)
+
+    # extract output (depends on model)
+    preds = list(preds.values())[0].numpy()[0]
     top5_idx = np.argsort(preds)[::-1][:5]
     results = [(CLASS_LABELS[i], float(preds[i]) * 100) for i in top5_idx]
     return results, preds
