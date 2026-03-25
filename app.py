@@ -1,1101 +1,724 @@
 import streamlit as st
+import tensorflow as tf
 import numpy as np
 from PIL import Image
-import io
-import base64
-import time
-import json
-import os
-import tensorflow as tf
+import cv2
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL_PATH = os.path.join(BASE_DIR, "model.keras")
-
-
-# ─── Session State Initialization (FIXED) ─────────────────────────────────────
-if "history" not in st.session_state:
-    st.session_state["history"] = []
-
-if "model" not in st.session_state:
-    st.session_state["model"] = None
-
-if "model_loaded" not in st.session_state:
-    st.session_state["model_loaded"] = False
-
-# ─── Page Config ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
+# Page config — must be first Streamlit call
+# ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="PlantCare AI",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="PlantCare AI – Crop Disease Checker",
+    page_icon="🌾",
+    layout="centered",
+    initial_sidebar_state="collapsed",
 )
 
-# ─── Class Labels (38 PlantVillage classes) ────────────────────────────────────
-CLASS_LABELS = [
-    "Apple___Apple_scab",
-    "Apple___Black_rot",
-    "Apple___Cedar_apple_rust",
-    "Apple___healthy",
-    "Blueberry___healthy",
-    "Cherry_(including_sour)___Powdery_mildew",
-    "Cherry_(including_sour)___healthy",
-    "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot",
-    "Corn_(maize)___Common_rust_",
-    "Corn_(maize)___Northern_Leaf_Blight",
-    "Corn_(maize)___healthy",
-    "Grape___Black_rot",
-    "Grape___Esca_(Black_Measles)",
-    "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)",
-    "Grape___healthy",
-    "Orange___Haunglongbing_(Citrus_greening)",
-    "Peach___Bacterial_spot",
-    "Peach___healthy",
-    "Pepper,_bell___Bacterial_spot",
-    "Pepper,_bell___healthy",
-    "Potato___Early_blight",
-    "Potato___Late_blight",
-    "Potato___healthy",
-    "Raspberry___healthy",
-    "Soybean___healthy",
-    "Squash___Powdery_mildew",
-    "Strawberry___Leaf_scorch",
-    "Strawberry___healthy",
-    "Tomato___Bacterial_spot",
-    "Tomato___Early_blight",
-    "Tomato___Late_blight",
-    "Tomato___Leaf_Mold",
-    "Tomato___Septoria_leaf_spot",
-    "Tomato___Spider_mites Two-spotted_spider_mite",
-    "Tomato___Target_Spot",
-    "Tomato___Tomato_Yellow_Leaf_Curl_Virus",
-    "Tomato___Tomato_mosaic_virus",
-    "Tomato___healthy",
-]
-
-# ─── Disease Info Database ─────────────────────────────────────────────────────
-DISEASE_INFO = {
-    "Apple___Apple_scab": {
-        "severity": "Moderate",
-        "description": "Fungal disease causing dark, scabby lesions on leaves and fruit.",
-        "treatment": ["Apply fungicides (captan, myclobutanil) early season", "Remove and destroy infected leaves", "Prune for better air circulation"],
-        "prevention": ["Plant resistant varieties", "Avoid overhead irrigation", "Apply preventive fungicide sprays"],
-        "icon": "🍎"
-    },
-    "Apple___Black_rot": {
-        "severity": "High",
-        "description": "Fungal disease causing fruit rot and frogeye leaf spots.",
-        "treatment": ["Remove mummified fruits", "Apply copper-based fungicides", "Prune infected wood during dormancy"],
-        "prevention": ["Maintain orchard sanitation", "Avoid wounding fruits", "Monitor regularly during wet seasons"],
-        "icon": "🍎"
-    },
-    "Apple___Cedar_apple_rust": {
-        "severity": "Moderate",
-        "description": "Fungal disease requiring two hosts: cedar/juniper and apple trees.",
-        "treatment": ["Apply fungicides during spring", "Remove nearby cedar trees if feasible", "Use myclobutanil or mancozeb"],
-        "prevention": ["Plant resistant apple varieties", "Create distance from cedar trees", "Apply preventive sprays at pink bud stage"],
-        "icon": "🍎"
-    },
-    "Corn_(maize)___Common_rust_": {
-        "severity": "Moderate",
-        "description": "Fungal rust disease producing orange-brown pustules on leaves.",
-        "treatment": ["Apply fungicides at early infection", "Use triazole or strobilurin fungicides", "Remove severely infected plants"],
-        "prevention": ["Plant resistant hybrids", "Early planting to avoid peak rust season", "Monitor fields regularly"],
-        "icon": "🌽"
-    },
-    "Corn_(maize)___Northern_Leaf_Blight": {
-        "severity": "High",
-        "description": "Fungal disease causing large tan lesions on leaves, reducing yield.",
-        "treatment": ["Apply fungicides at first sign", "Use azoxystrobin or propiconazole", "Remove crop debris after harvest"],
-        "prevention": ["Plant resistant hybrids", "Crop rotation with non-host crops", "Avoid dense planting"],
-        "icon": "🌽"
-    },
-    "Tomato___Late_blight": {
-        "severity": "Critical",
-        "description": "Devastating oomycete disease causing rapid plant collapse in wet conditions.",
-        "treatment": ["Apply copper-based fungicides immediately", "Remove and destroy infected plants", "Avoid composting infected material"],
-        "prevention": ["Use certified disease-free seeds", "Avoid overhead watering", "Apply preventive fungicides"],
-        "icon": "🍅"
-    },
-    "Tomato___Early_blight": {
-        "severity": "Moderate",
-        "description": "Fungal disease causing dark concentric ring lesions on older leaves.",
-        "treatment": ["Apply chlorothalonil or copper fungicides", "Remove lower infected leaves", "Improve air circulation"],
-        "prevention": ["Mulch around plants", "Avoid wetting foliage", "Rotate crops yearly"],
-        "icon": "🍅"
-    },
-    "Potato___Late_blight": {
-        "severity": "Critical",
-        "description": "Same pathogen as tomato late blight; caused the Irish Potato Famine.",
-        "treatment": ["Apply systemic fungicides immediately", "Destroy infected tubers and plants", "Harvest early if outbreak is severe"],
-        "prevention": ["Use certified seed potatoes", "Hill potatoes to protect tubers", "Apply preventive sprays in wet weather"],
-        "icon": "🥔"
-    },
-    "Grape___Black_rot": {
-        "severity": "High",
-        "description": "Fungal disease causing circular brown lesions on leaves and mummified berries.",
-        "treatment": ["Apply mancozeb or myclobutanil", "Remove mummified berries", "Prune for air circulation"],
-        "prevention": ["Apply fungicides from bud break", "Maintain good sanitation", "Avoid overhead irrigation"],
-        "icon": "🍇"
-    },
-    "Tomato___Tomato_Yellow_Leaf_Curl_Virus": {
-        "severity": "Critical",
-        "description": "Viral disease spread by whiteflies causing severe yellowing and curl of leaves.",
-        "treatment": ["No cure; remove and destroy infected plants", "Control whitefly vectors with insecticides", "Use reflective mulches to deter whiteflies"],
-        "prevention": ["Use virus-resistant varieties", "Install insect-proof netting", "Monitor and control whitefly populations"],
-        "icon": "🍅"
-    },
-}
-
-DEFAULT_DISEASE_INFO = {
-    "severity": "Unknown",
-    "description": "Consult an agricultural expert for detailed disease assessment.",
-    "treatment": ["Consult local agricultural extension office", "Send samples to plant disease lab", "Monitor plant regularly"],
-    "prevention": ["Maintain good agricultural practices", "Regular monitoring", "Proper crop rotation"],
-    "icon": "🌱"
-}
-
-SEVERITY_COLORS = {
-    "Critical": "#ff4444",
-    "High": "#ff8800",
-    "Moderate": "#ffcc00",
-    "Low": "#88cc00",
-    "Unknown": "#888888",
-}
-
-HEALTHY_PLANTS = [c for c in CLASS_LABELS if "healthy" in c]
-
-# ─── CSS Styling ───────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────
+# Global CSS
+# ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700;900&family=DM+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
 
 :root {
-    --green-deep: #1a3a2a;
-    --green-mid: #2d6a4f;
-    --green-light: #52b788;
-    --green-pale: #b7e4c7;
-    --cream: #f8f4ed;
-    --earth: #8b5e3c;
-    --red-disease: #c1121f;
-    --gold: #e9c46a;
-    --shadow: 0 4px 24px rgba(26,58,42,0.13);
+    --soil:   #2b2b2b;
+    --bark:   #5c3d2e;
+    --leaf:   #2d6a4f;
+    --lime:   #52b788;
+    --sun:    #f4a261;
+    --cream:  #faf3e8;
+    --red:    #c1121f;
+    --white:  #ffffff;
+    --shadow: rgba(59,42,26,0.12);
 }
 
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
+html, body  {
+    font-family: 'Nunito', sans-serif;
     background-color: var(--cream);
-    color: var(--green-deep);
+    color: var(--soil);
 }
 
-/* Hide default Streamlit elements */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding-top: 1.5rem !important; max-width: 800px; }
 
-/* Main container */
-.main .block-container {
-    padding-top: 1rem;
-    padding-bottom: 2rem;
-    max-width: 1200px;
-}
-
-/* Header */
-.app-header {
-    background: linear-gradient(135deg, var(--green-deep) 0%, var(--green-mid) 60%, var(--green-light) 100%);
-    border-radius: 20px;
-    padding: 2.5rem 3rem;
-    margin-bottom: 2rem;
-    position: relative;
-    overflow: hidden;
-    box-shadow: var(--shadow);
-}
-.app-header::before {
-    content: '';
-    position: absolute;
-    top: -40px; right: -40px;
-    width: 200px; height: 200px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 50%;
-}
-.app-header::after {
-    content: '';
-    position: absolute;
-    bottom: -60px; left: -20px;
-    width: 250px; height: 250px;
-    background: rgba(255,255,255,0.04);
-    border-radius: 50%;
-}
-.header-title {
-    font-family: 'Playfair Display', serif;
-    font-size: 3rem;
-    font-weight: 900;
-    color: #fff;
-    margin: 0;
-    letter-spacing: -1px;
-    line-height: 1.1;
-}
-.header-subtitle {
-    color: var(--green-pale);
-    font-size: 1.1rem;
-    margin-top: 0.5rem;
-    font-weight: 300;
-    letter-spacing: 0.5px;
-}
-.header-badge {
-    display: inline-block;
-    background: var(--gold);
-    color: var(--green-deep);
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.3rem 0.8rem;
-    border-radius: 20px;
-    margin-top: 1rem;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-}
-
-/* Upload zone */
-.upload-section {
-    background: #fff;
-    border: 2.5px dashed var(--green-pale);
-    border-radius: 16px;
-    padding: 2rem;
+.hero {
+    background: linear-gradient(135deg, #1b4332 0%, #2d6a4f 55%, #52b788 100%);
+    border-radius: 22px;
+    padding: 2.2rem 2rem 1.8rem;
+    color: white;
     text-align: center;
-    transition: all 0.3s;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1.6rem;
+    box-shadow: 0 10px 36px var(--shadow);
 }
-.upload-section:hover {
-    border-color: var(--green-light);
-    background: #f0faf4;
-}
+.hero .emoji { font-size: 3rem; display: block; margin-bottom: 0.5rem; }
+.hero h1     { font-size: 2.1rem; font-weight: 900; margin: 0 0 0.3rem; letter-spacing: -0.5px; }
+.hero p      { font-size: 1rem; opacity: 0.88; margin: 0; }
 
-/* Result cards */
 .result-card {
-    background: #fff;
-    border-radius: 16px;
-    padding: 1.8rem;
-    box-shadow: var(--shadow);
+    background: var(--white);
+    border-radius: 18px;
+    padding: 1.6rem 1.8rem;
+    box-shadow: 0 6px 28px var(--shadow);
     margin-bottom: 1.2rem;
-    border-left: 5px solid var(--green-light);
+    border-left: 7px solid var(--leaf);
 }
-.result-card.disease {
-    border-left-color: var(--red-disease);
-}
-.result-card.healthy {
-    border-left-color: #52b788;
-}
+.result-card.danger  { border-left-color: var(--red); }
+.result-card.healthy { border-left-color: var(--lime); }
+.result-card.critical{ border-left-color: #8b0000; }
 
-.result-title {
-    font-family: 'Playfair Display', serif;
-    font-size: 1.6rem;
-    font-weight: 700;
-    margin-bottom: 0.3rem;
-}
-.result-label {
-    font-size: 0.85rem;
+.badge {
+    display: inline-block;
+    padding: 5px 16px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.6px;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    color: #888;
-    margin-bottom: 0.2rem;
+    margin-bottom: 0.7rem;
 }
+.badge-danger  { background: #fde8ea; color: var(--red); }
+.badge-healthy { background: #d8f3dc; color: var(--leaf); }
+.badge-critical{ background: #fde8ea; color: #8b0000; }
 
-/* Confidence bar */
+.crop-name    { font-size: 1.65rem; font-weight: 900; margin: 0; }
+.disease-name { font-size: 1.1rem;  font-weight: 700; color: var(--bark); margin: 5px 0 0; }
+.confidence   { font-size: 0.88rem; color: #999; margin-top: 6px; }
+
 .conf-bar-bg {
     background: #eee;
-    border-radius: 50px;
-    height: 12px;
+    border-radius: 999px;
+    height: 10px;
     overflow: hidden;
-    margin-top: 0.5rem;
+    margin-top: 6px;
 }
-.conf-bar-fill {
-    height: 100%;
-    border-radius: 50px;
-    transition: width 1s ease;
-}
+.conf-bar-fill { height: 100%; border-radius: 999px; }
 
-/* Severity badge */
-.severity-badge {
-    display: inline-block;
-    padding: 0.25rem 0.9rem;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    color: #fff;
-    margin-bottom: 0.8rem;
-}
-
-/* Info sections */
-.info-box {
-    background: #f7fbf8;
-    border-radius: 12px;
-    padding: 1.2rem 1.5rem;
-    margin-bottom: 1rem;
-}
-.info-box h4 {
-    font-family: 'Playfair Display', serif;
-    font-size: 1rem;
-    color: var(--green-mid);
-    margin-bottom: 0.6rem;
-}
-.info-box ul {
-    margin: 0;
-    padding-left: 1.2rem;
-}
-.info-box li {
-    font-size: 0.9rem;
-    margin-bottom: 0.3rem;
-    color: #444;
-}
-
-/* Top predictions table */
-.pred-row {
-    display: flex;
-    align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #f0f0f0;
-    gap: 1rem;
-}
-.pred-row:last-child { border-bottom: none; }
-.pred-name { flex: 1; font-size: 0.88rem; }
-.pred-pct { font-weight: 600; font-size: 0.9rem; color: var(--green-mid); min-width: 50px; text-align: right; }
-
-/* Stats section */
-.stat-card {
-    background: linear-gradient(135deg, var(--green-deep), var(--green-mid));
+.tip-section {
+    background: var(--white);
     border-radius: 14px;
-    padding: 1.2rem;
-    text-align: center;
-    color: #fff;
-    box-shadow: var(--shadow);
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 3px 14px var(--shadow);
 }
-.stat-number {
-    font-family: 'Playfair Display', serif;
-    font-size: 2rem;
+.tip-section h3 {
+    font-size: 1rem;
+    font-weight: 800;
+    margin: 0 0 0.9rem;
+}
+.tip-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 0.65rem;
+    font-size: 0.94rem;
+    line-height: 1.6;
+}
+.tip-dot {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+    margin-top: 1px;
     font-weight: 900;
 }
-.stat-label {
+.dot-red    { background:#fde8ea; color: var(--red); }
+.dot-green  { background:#d8f3dc; color: var(--leaf); }
+.dot-yellow { background:#fef9e7; color: #b7790a; }
+.dot-blue   { background:#e8f4f8; color: #1a6985; }
+
+.alert-box {
+    background: #fff3cd;
+    border: 1.5px solid #ffc107;
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    margin-top: 0.5rem;
+    font-size: 0.93rem;
+    line-height: 1.6;
+}
+
+.footer {
+    text-align: center;
     font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    opacity: 0.8;
-    margin-top: 0.2rem;
+    color: #bbb;
+    margin-top: 2rem;
+    padding-bottom: 1.5rem;
 }
 
-/* Sidebar */
-section[data-testid="stSidebar"] {
-    background: var(--green-deep) !important;
-}
-section[data-testid="stSidebar"] * {
-    color: #e0f0e8 !important;
-}
-section[data-testid="stSidebar"] h2, 
-section[data-testid="stSidebar"] h3 {
-    font-family: 'Playfair Display', serif !important;
-    color: var(--green-pale) !important;
-}
-section[data-testid="stSidebar"] .stSelectbox label,
-section[data-testid="stSidebar"] .stSlider label {
-    color: var(--green-pale) !important;
+            .result-card {
+    color: #2b2b2b !important;
 }
 
-/* Streamlit button overrides */
-.stButton>button {
-    background: var(--green-mid) !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 10px !important;
-    padding: 0.6rem 1.5rem !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.5px !important;
-    transition: all 0.2s !important;
-}
-.stButton>button:hover {
-    background: var(--green-light) !important;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(82,183,136,0.35) !important;
+.tip-section {
+    color: #333 !important;
 }
 
-/* File uploader */
-.stFileUploader {
-    background: transparent !important;
+.tip-section h3 {
+    color: #1b4332 !important;
 }
 
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 0.5rem;
-    background: transparent !important;
-}
-.stTabs [data-baseweb="tab"] {
-    background: #fff !important;
-    border-radius: 10px !important;
-    border: 1.5px solid var(--green-pale) !important;
-    color: var(--green-deep) !important;
-    font-weight: 500 !important;
-    padding: 0.5rem 1.2rem !important;
-}
-.stTabs [aria-selected="true"] {
-    background: var(--green-mid) !important;
-    color: #fff !important;
-    border-color: var(--green-mid) !important;
+.tip-item {
+    color: #444 !important;
 }
 
-.stProgress > div > div {
-    background-color: var(--green-light) !important;
+.alert-box {
+    color: #5c3d2e !important;
 }
+            
+p, span, label, div {
+    color: inherit;
+}
+            
+.stFileUploader label {
+    color: #3b2a1a !important;
+    font-weight: 600;
+}
+            
 
-/* Divider */
-hr { border-color: var(--green-pale); opacity: 0.5; }
-
-/* Healthy vs Disease */
-.healthy-banner {
-    background: linear-gradient(120deg, #d8f3dc, #b7e4c7);
-    border-radius: 14px;
-    padding: 1.5rem 2rem;
-    text-align: center;
-    border: 2px solid #52b788;
-}
-.disease-banner {
-    background: linear-gradient(120deg, #fff0f0, #ffd6d6);
-    border-radius: 14px;
-    padding: 1.5rem 2rem;
-    text-align: center;
-    border: 2px solid #c1121f;
-}
-
-/* History item */
-.history-item {
-    background: #fff;
-    border-radius: 10px;
-    padding: 0.8rem 1rem;
-    margin-bottom: 0.5rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    display: flex;
-    align-items: center;
-    gap: 0.8rem;
-}
 </style>
 """, unsafe_allow_html=True)
 
+# ──────────────────────────────────────────────────────────────
+# Disease knowledge base  (farmer-friendly language)
+# ──────────────────────────────────────────────────────────────
+DISEASE_INFO = {
+    "Apple___Apple_scab": {
+        "crop": "Apple", "disease": "Apple Scab",
+        "what": "A fungal infection that creates dark, rough spots on leaves and fruits, making them unsellable.",
+        "signs": ["Dark olive-green or brown spots on leaves", "Rough, scabby patches on the fruit skin", "Leaves may turn yellow and fall early"],
+        "causes": ["Wet and rainy weather in spring", "Water staying on leaves for too long", "Infected fallen leaves from last season left in the field"],
+        "cure": ["Spray a copper-based fungicide every 7–10 days during wet weather", "Use mancozeb or captan spray as soon as spots appear", "Remove and burn all fallen leaves to stop the disease from spreading next year"],
+        "prevention": ["Choose apple varieties that resist this disease", "Prune branches so air flows freely through the tree", "Never water from above — water at the base of the tree only"],
+        "severity": "medium",
+    },
+    "Apple___Black_rot": {
+        "crop": "Apple", "disease": "Black Rot",
+        "what": "A fungal disease that rots the fruit and creates purple spots on leaves. Fruits shrivel and turn completely black.",
+        "signs": ["Purple spots on leaves with brown centres", "Fruits develop brown rings that spread and turn black", "Shrivelled, mummy-like rotted fruits hanging on the tree"],
+        "causes": ["Dead or wounded branches left on the tree", "Warm and humid weather", "Insects causing wounds on the fruit where fungus enters"],
+        "cure": ["Cut and remove all dead or diseased branches immediately", "Spray captan or thiophanate-methyl fungicide", "Remove all rotted fruits from the tree and ground and burn them"],
+        "prevention": ["Prune the tree every year to remove dead wood", "Keep the orchard clean of fallen fruits and leaves", "Protect fruits from insect damage"],
+        "severity": "high",
+    },
+    "Apple___Cedar_apple_rust": {
+        "crop": "Apple", "disease": "Cedar Apple Rust",
+        "what": "A fungal disease spread from nearby cedar trees that creates bright orange-yellow spots on leaves.",
+        "signs": ["Bright orange or yellow spots on the top side of leaves", "Small tube-like growths under the leaf", "Fruits may develop pale spots"],
+        "causes": ["Fungus travels from nearby juniper or cedar trees via wind", "Wet and windy spring weather helps spread it"],
+        "cure": ["Spray myclobutanil or mancozeb fungicide in early spring", "Remove any cedar or juniper trees growing near your apple orchard if possible"],
+        "prevention": ["Plant rust-resistant apple varieties", "Begin fungicide spray before the rainy season starts"],
+        "severity": "medium",
+    },
+    "Apple___healthy": {
+        "crop": "Apple", "disease": "Healthy Plant",
+        "what": "Your apple plant looks healthy! No signs of disease detected. Keep up the good farming practices.",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Keep watering regularly at the base of the tree", "Prune dead branches every winter", "Add compost to the soil once a year"],
+        "severity": "healthy",
+    },
+    "Blueberry___healthy": {
+        "crop": "Blueberry", "disease": "Healthy Plant",
+        "what": "Your blueberry plant is perfectly healthy! Keep doing what you are doing.",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Water regularly but avoid waterlogging", "Add mulch around the base to keep moisture in", "Prune old branches after harvest"],
+        "severity": "healthy",
+    },
+    "Cherry_(including_sour)___Powdery_mildew": {
+        "crop": "Cherry", "disease": "Powdery Mildew",
+        "what": "A fungal disease that covers leaves and young fruits with a white powdery coating, weakening the plant and reducing fruit production.",
+        "signs": ["White powdery patches on leaves — especially young ones", "Leaves curl and become twisted", "Fruits may crack or not grow properly"],
+        "causes": ["Dry weather with warm days and cool nights", "Too many plants crowded together with poor airflow", "High humidity without rain"],
+        "cure": ["Spray wettable sulphur or potassium bicarbonate on affected areas", "Remove and destroy badly infected leaves", "Spray neem oil mixed with water (5 ml per litre) as an organic option"],
+        "prevention": ["Space plants well so wind can pass through", "Avoid watering from above", "Prune the tree to open up the centre"],
+        "severity": "medium",
+    },
+    "Cherry_(including_sour)___healthy": {
+        "crop": "Cherry", "disease": "Healthy Plant",
+        "what": "Your cherry plant is in good health. No disease found.",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Water at the base, not on leaves", "Spray neem oil once a month as a precaution", "Keep fallen leaves cleaned up around the tree"],
+        "severity": "healthy",
+    },
+    "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot": {
+        "crop": "Corn (Maize)", "disease": "Gray Leaf Spot",
+        "what": "A fungal disease creating long gray or tan strips on corn leaves, reducing grain fill and yield.",
+        "signs": ["Long, narrow gray or tan coloured patches on leaves", "Patches have straight edges and run along the leaf veins", "Severely infected leaves dry out completely"],
+        "causes": ["Wet and humid weather for many continuous days", "Corn planted very close together without space", "Growing corn in the same field every year"],
+        "cure": ["Spray mancozeb or azoxystrobin fungicide on leaves", "Start spraying early when first spots appear", "Do not wait until infection spreads to many leaves"],
+        "prevention": ["Rotate crops — do not grow corn in the same field every year", "Plant disease-resistant corn varieties", "Avoid planting corn too densely"],
+        "severity": "medium",
+    },
+    "Corn_(maize)___Common_rust_": {
+        "crop": "Corn (Maize)", "disease": "Common Rust",
+        "what": "A fungal disease that creates small reddish-brown powdery bumps on corn leaves. Reduces yield in severe cases.",
+        "signs": ["Small, oval, reddish-brown raised bumps on both sides of leaves", "Bumps break open and release rust-coloured powder", "Severe cases cause leaves to yellow and dry out"],
+        "causes": ["Cool nights and warm days with high humidity", "Wind carrying fungal spores from other fields"],
+        "cure": ["Spray mancozeb, propiconazole, or azoxystrobin fungicide", "Spray during early morning hours for best results", "Repeat spray every 10–14 days if weather stays wet"],
+        "prevention": ["Plant rust-resistant hybrid corn varieties", "Plant early in the season to avoid peak rust periods"],
+        "severity": "medium",
+    },
+    "Corn_(maize)___Northern_Leaf_Blight": {
+        "crop": "Corn (Maize)", "disease": "Northern Leaf Blight",
+        "what": "A serious fungal disease creating large cigar-shaped gray-green spots on corn leaves. Can cause heavy yield loss.",
+        "signs": ["Large, long gray-green or tan spots shaped like a cigar on leaves", "Spots can grow 10–15 cm long", "Whole leaves may die in severe cases"],
+        "causes": ["Moderate temperatures and wet or humid weather for long periods", "Growing the same crop every year in the same field", "Dense planting that traps moisture between plants"],
+        "cure": ["Spray propiconazole or azoxystrobin-based fungicide", "Apply as soon as the first large spots appear", "Remove severely infected plants to stop the spread"],
+        "prevention": ["Use certified disease-resistant corn seeds", "Rotate crops every season — alternate with soybean or wheat", "Till the soil after harvest to destroy infected crop remains"],
+        "severity": "high",
+    },
+    "Corn_(maize)___healthy": {
+        "crop": "Corn (Maize)", "disease": "Healthy Plant",
+        "what": "Your corn crop looks healthy and growing well! No disease signs found.",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Water at the base, not by sprinkling on leaves", "Add nitrogen-rich fertiliser at the right growth stage", "Keep weeds away from the crop"],
+        "severity": "healthy",
+    },
+    "Grape___Black_rot": {
+        "crop": "Grape", "disease": "Black Rot",
+        "what": "A very damaging fungal disease that turns grape berries completely black and shrivelled, making them worthless.",
+        "signs": ["Tan or brown spots with dark edges on leaves", "Small black dots visible inside the leaf spots", "Berries turn brown, then completely black and hard like a raisin"],
+        "causes": ["Warm and wet weather during the growing season", "Infected mummified berries left on the vine from last year"],
+        "cure": ["Spray mancozeb or captan fungicide every 7–10 days", "Remove all mummified berries from the vine and the ground", "Prune infected shoot tips and destroy them by burning"],
+        "prevention": ["Remove all dead plant material before the new season starts", "Train vines to keep leaves dry with good airflow", "Start preventive fungicide sprays before the flowering stage"],
+        "severity": "high",
+    },
+    "Grape___Esca_(Black_Measles)": {
+        "crop": "Grape", "disease": "Black Measles (Vine Disease)",
+        "what": "A serious wood disease of grapevines that blocks water flow inside the vine. Trees suddenly wilt in hot weather and slowly die over years.",
+        "signs": ["Leaves suddenly wilt and dry out completely on hot days", "Tiger-stripe pattern — yellow and brown strips on leaves", "Berries develop small dark spots and may crack open"],
+        "causes": ["Fungus living inside the old wood of the vine", "Pruning wounds left exposed without protection", "Old vines (10+ years) are most vulnerable"],
+        "cure": ["No complete cure exists — manage by removing infected wood", "Cut back to healthy white wood and paint wounds with copper paste or tree wound sealant", "Severely affected vines may need to be removed completely"],
+        "prevention": ["Always paint pruning cuts with wound sealant right after cutting", "Prune during dry weather — never during rain", "Avoid making very large pruning wounds on old vines"],
+        "severity": "high",
+    },
+    "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)": {
+        "crop": "Grape", "disease": "Leaf Blight",
+        "what": "A fungal disease creating dark spots on leaves that can cause early leaf drop and weaken the vine before harvest.",
+        "signs": ["Dark brown irregular spots on leaves", "Spots may have a yellowish ring around them", "Badly infected leaves fall off the vine early"],
+        "causes": ["Warm, humid weather during the growing season", "Poor airflow in the vineyard", "Rain splashing spores from soil up onto leaves"],
+        "cure": ["Spray mancozeb or copper-based fungicide", "Remove and destroy fallen infected leaves", "Improve airflow by thinning out dense vine growth"],
+        "prevention": ["Avoid overhead irrigation — use drip or furrow irrigation", "Keep the vineyard floor clean of fallen leaves", "Spray preventively before the rainy season begins"],
+        "severity": "medium",
+    },
+    "Grape___healthy": {
+        "crop": "Grape", "disease": "Healthy Plant",
+        "what": "Your grapevine is looking healthy! No disease signs detected.",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Prune every year to maintain good vine shape", "Check vines weekly during the monsoon for early signs of disease", "Apply compost around the base every spring"],
+        "severity": "healthy",
+    },
+    "Orange___Haunglongbing_(Citrus_greening)": {
+        "crop": "Orange / Citrus", "disease": "Citrus Greening Disease",
+        "what": "One of the most deadly citrus diseases in the world. Trees produce small, bitter, green fruits and slowly die. There is NO cure — act fast to protect your other trees.",
+        "signs": ["Leaves turn yellow on one side of the branch while other side stays green", "Small, lopsided fruits that stay green even when ripe and taste very bitter", "Stunted and weak new growth", "Tree slowly declines and stops producing over years"],
+        "causes": ["Spread by tiny jumping insects called psyllids that suck sap and carry the disease", "Infected planting material brought from outside your farm"],
+        "cure": ["There is NO cure — infected trees MUST be removed and burned far away to protect other trees", "Control the psyllid insect very aggressively on all remaining healthy trees using approved insecticide"],
+        "prevention": ["Spray insecticide regularly every 3 weeks to control psyllid insects", "Buy certified disease-free seedlings only from a government nursery", "Inspect your orchard every week — catch it early", "Report to your local Krishi Vigyan Kendra (KVK) immediately if you suspect this disease"],
+        "severity": "critical",
+    },
+    "Peach___Bacterial_spot": {
+        "crop": "Peach", "disease": "Bacterial Spot",
+        "what": "A bacterial infection creating dark spots and holes in leaves and fruits, reducing fruit quality and market price.",
+        "signs": ["Small water-soaked spots on leaves that turn brown or purple", "Spots fall out, creating a 'shot-hole' or bullet-hole look on leaves", "Sunken dark spots on fruits", "Leaves may drop early, weakening the tree"],
+        "causes": ["Warm and wet weather in spring and early summer", "Wind and rain spreading bacteria from plant to plant", "Pruning wounds left open"],
+        "cure": ["Spray copper-based bactericide (copper hydroxide or copper sulphate) at the first sign", "Remove badly infected leaves and fruits and destroy them", "Avoid wetting leaves when watering"],
+        "prevention": ["Plant resistant peach varieties if available in your area", "Spray copper before the rainy season as a protective measure", "Avoid working in the orchard when plants are wet"],
+        "severity": "medium",
+    },
+    "Peach___healthy": {
+        "crop": "Peach", "disease": "Healthy Plant",
+        "what": "Your peach tree looks great and healthy!",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Thin fruits when young so remaining fruits grow bigger and sweeter", "Water at the base only — not on leaves or fruits", "Apply balanced fertiliser after harvest to restore tree strength"],
+        "severity": "healthy",
+    },
+    "Pepper,_bell___Bacterial_spot": {
+        "crop": "Bell Pepper", "disease": "Bacterial Spot",
+        "what": "A bacterial disease causing dark spots on leaves and fruits, making peppers look bad and reducing the price you can get at the market.",
+        "signs": ["Small, dark, water-soaked spots on leaves", "Spots turn brown with yellow rings around them", "Dark, raised or sunken spots on the pepper fruits themselves", "Severe infection causes leaves to drop, exposing fruits to sun damage"],
+        "causes": ["Rain and wind spreading bacteria from plant to plant", "Warm and wet weather conditions", "Infected seeds or seedlings brought from outside your farm"],
+        "cure": ["Spray copper-based bactericide every 7–10 days", "Remove and destroy infected plants if they are severely affected", "Avoid touching healthy plants after touching sick ones — wash hands in between"],
+        "prevention": ["Buy certified disease-free seeds from a trusted source", "Do not grow peppers in the same spot every year — rotate with other crops", "Avoid watering from above — use drip irrigation at the base"],
+        "severity": "medium",
+    },
+    "Pepper,_bell___healthy": {
+        "crop": "Bell Pepper", "disease": "Healthy Plant",
+        "what": "Your pepper plant is healthy and looking good!",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Stake plants when they are young so they don't bend and break", "Apply mulch around the base to keep soil moist and cool", "Feed with potassium-rich fertiliser during fruiting for bigger, better peppers"],
+        "severity": "healthy",
+    },
+    "Potato___Early_blight": {
+        "crop": "Potato", "disease": "Early Blight",
+        "what": "A common fungal disease that creates dark ring-like spots on older leaves, reducing the plant's ability to produce good tubers underground.",
+        "signs": ["Dark brown spots with rings inside — like a target or dartboard — on older lower leaves", "Yellow area surrounding the spots", "Infected leaves dry and fall off, starting from the bottom of the plant upward"],
+        "causes": ["Warm temperatures (24–29°C) with high humidity", "Plants weakened from lack of water or nutrients", "Fungal spores in infected soil and old crop waste left in the field"],
+        "cure": ["Spray mancozeb or chlorothalonil fungicide every 7–10 days", "Remove infected leaves and burn them — do not leave on the ground", "Make sure the crop gets enough fertiliser — strong healthy plants fight disease better"],
+        "prevention": ["Use certified disease-free seed potatoes", "Rotate crops — do not grow potato in the same field every year", "Water in the morning so leaves dry during the day", "Avoid overly dense planting — give each plant space"],
+        "severity": "medium",
+    },
+    "Potato___Late_blight": {
+        "crop": "Potato", "disease": "Late Blight",
+        "what": "A devastating disease that can destroy an ENTIRE potato field within just 3–5 days. This is extremely serious. Act immediately — do not wait even one day.",
+        "signs": ["Large, dark, water-soaked spots on leaves that appear suddenly", "White fuzzy mould ring visible at the edge of spots (usually early morning)", "Stems turn dark brown and collapse", "Tubers underground develop brown rot inside"],
+        "causes": ["Cool and wet weather (10–20°C with rain, fog, or heavy dew)", "Infected seed potatoes planted from last year", "Spores spread extremely fast through wind and rain — can spread across entire village in days"],
+        "cure": ["⚠️ SPRAY WITHIN 24 HOURS — use metalaxyl + mancozeb (sold as Ridomil Gold) or cymoxanil immediately", "Remove ALL infected plant parts from the field and BURN them far away — do not compost or leave in field", "If more than 30% of the crop is infected, consider harvesting tubers early to save what remains"],
+        "prevention": ["Plant only certified blight-free seed potatoes from a government supplier", "Spray protective fungicide (mancozeb) before the rainy season starts every year", "Use drip irrigation at the base — never sprinkler on leaves", "Ensure good drainage so water does not stand in the field"],
+        "severity": "critical",
+    },
+    "Potato___healthy": {
+        "crop": "Potato", "disease": "Healthy Plant",
+        "what": "Your potato crop is growing well with no disease signs. Keep monitoring regularly.",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Earth up soil around stems as plants grow to protect tubers from sunlight", "Keep soil evenly moist — potato tubers crack if soil dries and wets in cycles", "Harvest when the vines naturally die back on their own"],
+        "severity": "healthy",
+    },
+    "Raspberry___healthy": {
+        "crop": "Raspberry", "disease": "Healthy Plant",
+        "what": "Your raspberry plants are healthy and growing well!",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Remove old fruiting canes after harvest each year", "Keep the bed weed-free around plants", "Support canes with stakes or wires to prevent bending and breakage"],
+        "severity": "healthy",
+    },
+    "Soybean___healthy": {
+        "crop": "Soybean", "disease": "Healthy Plant",
+        "what": "Your soybean crop looks perfectly healthy!",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Treat seeds with rhizobium bacteria before sowing for better nitrogen fixation", "Rotate with non-legume crops like wheat every year", "Control weeds in the early growth stages when plants are still small"],
+        "severity": "healthy",
+    },
+    "Squash___Powdery_mildew": {
+        "crop": "Squash / Pumpkin / Gourd", "disease": "Powdery Mildew",
+        "what": "A fungal disease that covers leaves with a white powder coating, weakening the plant and reducing fruit production and size.",
+        "signs": ["White powdery coating on the top surface of leaves", "Leaves turn yellow under the white patches", "Badly affected leaves dry out and curl up"],
+        "causes": ["Dry weather with high humidity — common when nights get cooler", "Plants crowded together without space for airflow"],
+        "cure": ["Spray wettable sulphur or potassium bicarbonate solution on all leaf surfaces", "Neem oil spray (5 ml per litre of water) works well for organic farmers — spray every 5 days", "Remove and burn badly affected leaves"],
+        "prevention": ["Space plants well — at least 1 metre between plants", "Water at the base of the plant in the morning — never in the evening", "Plant mildew-resistant varieties if available in your area"],
+        "severity": "medium",
+    },
+    "Strawberry___Leaf_scorch": {
+        "crop": "Strawberry", "disease": "Leaf Scorch",
+        "what": "A fungal disease creating small dark spots that make leaves look burned or scorched. Weakens the plant and reduces fruit yield.",
+        "signs": ["Small, dark purple spots on upper leaf surface", "Spots expand and their centres turn brownish-gray", "Severely affected leaves turn reddish-brown and dry up completely"],
+        "causes": ["Wet weather and high humidity during the season", "Infected older leaves spreading spores to new leaves", "Poor airflow between crowded plants"],
+        "cure": ["Spray captan or myclobutanil fungicide every 7–10 days", "Remove older infected leaves from the plant at the base", "Improve airflow by thinning out crowded plants"],
+        "prevention": ["Plant in raised beds for better water drainage", "Avoid watering from above — use drip irrigation at the base", "Replace old plants that are more than 3 years old with fresh young seedlings"],
+        "severity": "medium",
+    },
+    "Strawberry___healthy": {
+        "crop": "Strawberry", "disease": "Healthy Plant",
+        "what": "Your strawberry plants look fresh and healthy!",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Use straw mulch under plants to keep fruits clean and soil moist", "Remove extra runners regularly to keep energy focused on fruiting", "Feed with balanced fertiliser after each harvest"],
+        "severity": "healthy",
+    },
+    "Tomato___Bacterial_spot": {
+        "crop": "Tomato", "disease": "Bacterial Spot",
+        "what": "A bacterial disease causing small dark spots on leaves and fruits, making tomatoes unsellable at market.",
+        "signs": ["Small, dark brown, water-soaked spots on leaves surrounded by yellow rings", "Dark, raised spots on green fruits", "Severely infected leaves fall off, exposing fruits to sunburn and cracking"],
+        "causes": ["Warm, wet, rainy weather conditions", "Wind and rain splashing bacteria from plant to plant rapidly", "Farmers working in wet fields spread bacteria on hands and tools"],
+        "cure": ["Spray copper hydroxide or copper sulphate bactericide every 7 days", "Remove and burn badly infected plants from the field", "Stop all overhead watering immediately — switch to watering at the base only"],
+        "prevention": ["Buy certified disease-free seeds or seedlings", "Stake plants to keep leaves and fruits off the ground", "Do not work in the field when leaves are still wet with dew or rain", "Rotate tomato with other crops every 2–3 years"],
+        "severity": "medium",
+    },
+    "Tomato___Early_blight": {
+        "crop": "Tomato", "disease": "Early Blight",
+        "what": "A fungal disease that creates dark ring-like spots on older tomato leaves, reducing the plant's strength and fruit yield.",
+        "signs": ["Dark brown spots with concentric rings (like a dartboard target) starting on older lower leaves", "Yellow area around each spot", "Lower leaves die and fall off first", "Dark sunken spots may also appear on fruits near the stem"],
+        "causes": ["Warm and humid weather conditions", "Plants lacking nutrition — especially nitrogen fertiliser", "Soil splashing onto leaves during heavy rain or overhead watering"],
+        "cure": ["Spray mancozeb or chlorothalonil fungicide every 7–10 days", "Apply nitrogen-rich fertiliser to strengthen plants — weak plants get more disease", "Remove infected lower leaves and destroy them — do not leave on ground"],
+        "prevention": ["Mulch the soil around plants to stop rain from splashing spores onto leaves", "Water at the base only — never spray water onto leaves", "Feed plants regularly with balanced fertiliser throughout the season"],
+        "severity": "medium",
+    },
+    "Tomato___Late_blight": {
+        "crop": "Tomato", "disease": "Late Blight",
+        "what": "A highly destructive disease that can wipe out an ENTIRE tomato field within one week. Take urgent action TODAY.",
+        "signs": ["Large, dark, water-soaked patches on leaves — appearing suddenly and spreading fast", "White fuzzy mould growth at the edge of spots on the underside of leaves (seen in early morning)", "Stems turn dark brown and collapse", "Fruits develop large dark brown patches and rot quickly"],
+        "causes": ["Cool, wet weather (15–20°C) with rain or heavy dew — spreads extremely fast", "Disease in the air from nearby infected fields can reach your farm"],
+        "cure": ["⚠️ URGENT — spray metalaxyl + mancozeb (Ridomil Gold) or cymoxanil TODAY — within 24 hours", "Remove ALL infected plants from the field immediately and burn them far away from your crops", "Do NOT leave infected material in the field, compost it, or throw near water sources"],
+        "prevention": ["Spray protective fungicide (mancozeb) at the start of cool/rainy season every year", "Use drip irrigation — never overhead sprinklers on tomatoes", "Choose late blight resistant tomato varieties — ask your seed dealer", "Ensure good drainage so water does not pool in the field"],
+        "severity": "critical",
+    },
+    "Tomato___Leaf_Mold": {
+        "crop": "Tomato", "disease": "Leaf Mold",
+        "what": "A fungal disease common in humid and enclosed growing areas, covering the undersides of leaves with mold and causing them to dry out.",
+        "signs": ["Pale yellow-green patches on the upper surface of leaves", "Olive-green to grayish-brown mold growth on the UNDERSIDE of leaves", "Infected leaves dry out and fall off, reducing fruit production"],
+        "causes": ["Very high humidity — especially above 85%", "Poor ventilation in enclosed or polyhouse growing", "Cool nights followed by warm days"],
+        "cure": ["Improve ventilation immediately — open vents or increase spacing between plants", "Spray chlorothalonil or mancozeb fungicide", "Remove and destroy infected leaves from the plants"],
+        "prevention": ["Grow tomatoes in well-ventilated open areas when possible", "Avoid watering in the evening — water in the morning only", "Use mold-resistant tomato varieties for enclosed farming"],
+        "severity": "medium",
+    },
+    "Tomato___Septoria_leaf_spot": {
+        "crop": "Tomato", "disease": "Septoria Leaf Spot",
+        "what": "A fungal disease that creates many small circular spots on tomato leaves, starting from the bottom of the plant and moving upward if not controlled.",
+        "signs": ["Many small, round spots with dark edges and lighter centres on leaves", "Tiny dark specks visible inside each spot", "Lower leaves affected first — disease moves upward if not treated", "Heavily infected leaves turn yellow and fall off"],
+        "causes": ["Wet and humid weather during the growing season", "Water splashing from soil up onto leaves during rain or watering", "Growing tomatoes in the same location year after year"],
+        "cure": ["Spray mancozeb, chlorothalonil, or copper-based fungicide every 7–10 days", "Remove and destroy all infected leaves starting from the bottom of the plant", "Keep the base of plants clear of fallen leaves"],
+        "prevention": ["Mulch the soil around plants to reduce soil splash onto leaves", "Rotate crops — don't grow tomatoes in the same spot every year", "Water only at the base — never from above"],
+        "severity": "medium",
+    },
+    "Tomato___Spider_mites Two-spotted_spider_mite": {
+        "crop": "Tomato", "disease": "Spider Mite Attack",
+        "what": "Tiny spider-like creatures (too small to see clearly) that suck sap from leaves, causing them to look bronzed, dusty, and weak. They are not a fungus — they are pests.",
+        "signs": ["Fine yellow or white speckling all over leaves — looks like someone threw dust or sand on them", "Leaves turn bronze or brown, then dry out completely", "Thin spider-like webs visible under leaves when you look closely", "Problem gets much worse in hot, dry weather"],
+        "causes": ["Hot and dry weather (above 30°C) causes rapid multiplication", "Excess nitrogen fertiliser makes plants soft and very attractive to mites", "Spraying pesticides that kill the natural enemies of mites makes the problem worse"],
+        "cure": ["Spray abamectin, bifenazate, or spiromesifen miticide — these are specific to mites, not normal pesticides", "Wash the undersides of leaves with a strong water spray to physically knock mites off", "Neem oil spray (organic option) every 5 days"],
+        "prevention": ["Water plants regularly — mites multiply fast in dry conditions", "Avoid overusing nitrogen fertiliser", "Try to preserve natural predators by not overspraying pesticides unnecessarily"],
+        "severity": "medium",
+    },
+    "Tomato___Target_Spot": {
+        "crop": "Tomato", "disease": "Target Spot",
+        "what": "A fungal disease creating round dark spots with rings on leaves and sometimes on fruits, similar in appearance to early blight.",
+        "signs": ["Round brown spots with darker rings on leaves", "Spots can also appear on stems and fruits", "Heavily infected leaves die early, reducing the plant's ability to ripen fruits"],
+        "causes": ["Warm, humid, wet conditions during the growing season", "Dense planting with poor airflow between plants"],
+        "cure": ["Spray azoxystrobin or chlorothalonil fungicide", "Remove infected leaves from the base of the plant upward", "Improve spacing between plants for better air movement"],
+        "prevention": ["Space tomato plants at least 50–60 cm apart", "Stake plants to keep them upright and leaves off the ground", "Water at the base only — never from above"],
+        "severity": "medium",
+    },
+    "Tomato___Tomato_Yellow_Leaf_Curl_Virus": {
+        "crop": "Tomato", "disease": "Yellow Leaf Curl Virus",
+        "what": "A serious virus spread by tiny white flying insects (whiteflies). Once infected, plants stop growing and produce almost no fruit. Act quickly to protect healthy plants.",
+        "signs": ["Leaves curl strongly upward and turn pale yellow-green", "Leaves look very small, crinkled, and distorted", "Plant growth completely stops", "Very few or absolutely no fruits form", "Clouds of tiny white insects fly up when you shake the plant"],
+        "causes": ["Spread by whitefly insects that carry the virus from sick plants to healthy ones", "There is NO cure once a plant is infected with the virus"],
+        "cure": ["Remove and destroy infected plants IMMEDIATELY — before whiteflies spread the virus to more plants", "Spray imidacloprid or thiamethoxam insecticide to kill whiteflies on all remaining healthy plants"],
+        "prevention": ["Place yellow sticky traps throughout the field to catch whiteflies early", "Cover seedlings with insect-proof nets until they are well established", "Spray neem oil every week as a preventive measure against whiteflies", "Buy virus-resistant tomato varieties — ask your seed dealer specifically"],
+        "severity": "critical",
+    },
+    "Tomato___Tomato_mosaic_virus": {
+        "crop": "Tomato", "disease": "Mosaic Virus",
+        "what": "A virus that creates a patchy mosaic pattern on leaves and reduces fruit quality and size. This virus spreads very easily through touch.",
+        "signs": ["Light and dark green mosaic or mottled patchwork pattern on leaves", "Leaves look distorted, curled, or wrinkled", "Fruits may show yellow patches or be smaller than normal"],
+        "causes": ["Spreads very easily by touching infected plants then healthy ones with bare hands", "Contaminated tools like knives, scissors, or stakes", "Infected seeds planted at the start of the season"],
+        "cure": ["No cure for virus-infected plants — remove and burn infected plants away from the field", "Wash hands thoroughly with soap and disinfect tools with bleach water before touching other plants"],
+        "prevention": ["Always wash hands with soap before working with tomato plants", "Disinfect pruning tools between every plant with bleach water", "Do not smoke near tomato plants — tobacco carries a related virus", "Buy only certified virus-free seeds"],
+        "severity": "high",
+    },
+    "Tomato___healthy": {
+        "crop": "Tomato", "disease": "Healthy Plant",
+        "what": "Your tomato plant looks healthy and growing well. Excellent work!",
+        "signs": [], "causes": [], "cure": [],
+        "prevention": ["Stake plants when they are young before they start falling over", "Feed with potassium-rich fertiliser during the fruiting stage for better quality fruits", "Water consistently at the base — avoid wetting leaves or fruits"],
+        "severity": "healthy",
+    },
+}
 
-# ─── Helper Functions ──────────────────────────────────────────────────────────
-@st.cache_resource
-def load_model(path):
-    try:
-        model = tf.keras.models.load_model(path, compile=False)
-        return model
-    except Exception as e:
-        st.error(f"❌ Error loading model: {e}")
-        return None
+# ──────────────────────────────────────────────────────────────
+# Constants
+# ──────────────────────────────────────────────────────────────
+MODEL_PATH = "plantvillage_phase3_epoch25_FINAL.h5"
+IMAGE_SIZE = (224, 224)
+LAST_CONV  = "out_relu"
 
-def preprocess_image(img: Image.Image, target_size=(224, 224)):
-    img = img.convert("RGB")
-    img = img.resize(target_size, Image.LANCZOS)
+CLASS_NAMES = list(DISEASE_INFO.keys())   # order must match training
+
+SEVERITY_META = {
+    "healthy":  {"label": "✅ HEALTHY CROP",       "badge": "badge-healthy", "card": "healthy",  "bar": "#52b788"},
+    "medium":   {"label": "⚠️ DISEASE DETECTED",   "badge": "badge-danger",  "card": "danger",   "bar": "#e9c46a"},
+    "high":     {"label": "🚨 SERIOUS DISEASE",    "badge": "badge-danger",  "card": "danger",   "bar": "#f4a261"},
+    "critical": {"label": "🆘 CRITICAL — ACT NOW", "badge": "badge-critical","card": "critical", "bar": "#c1121f"},
+}
+
+# ──────────────────────────────────────────────────────────────
+# Model helpers
+# ──────────────────────────────────────────────────────────────
+@st.cache_resource(show_spinner=False)
+def load_model():
+    m = tf.keras.models.load_model(MODEL_PATH, compile=False)
+    m.compile(optimizer=tf.keras.optimizers.Adam(1e-5),
+              loss="categorical_crossentropy", metrics=["accuracy"])
+    return m
+
+def preprocess(pil_img):
+    img = pil_img.resize(IMAGE_SIZE).convert("RGB")
     arr = np.array(img, dtype=np.float32) / 255.0
     return np.expand_dims(arr, axis=0)
 
-def predict(model, img_array):
-    try:
-        preds = model.predict(img_array, verbose=0)[0]
-
-        # Convert to (label, confidence)
-        results = []
-        for i, prob in enumerate(preds):
-            results.append((CLASS_LABELS[i], float(prob * 100)))
-
-        # Sort by confidence
-        results = sorted(results, key=lambda x: x[1], reverse=True)
-
-        return results, preds
-
-    except Exception as e:
-        st.error(f"❌ Prediction Error: {e}")
-        raise e
-
-def format_class_name(raw: str) -> tuple[str, str]:
-    """Returns (plant, condition)."""
-    parts = raw.split("___")
-    plant = parts[0].replace("_", " ").strip()
-    condition = parts[1].replace("_", " ").strip() if len(parts) > 1 else "Unknown"
-    return plant, condition
-
-def get_conf_color(conf: float) -> str:
-    if conf >= 85:
-        return "#2d6a4f"
-    elif conf >= 65:
-        return "#52b788"
-    elif conf >= 45:
-        return "#e9c46a"
-    else:
-        return "#e76f51"
-
-def make_gradcam(model, img_array):
-    """Generate Grad-CAM heatmap."""
-    try:
-        import tensorflow as tf
-        import cv2
-
-        last_conv_layer = None
-        for layer in reversed(model.layers):
-            if hasattr(layer, 'output_shape') and len(layer.output_shape) == 4:
-                last_conv_layer = layer.name
-                break
-
-        if last_conv_layer is None:
-            last_conv_layer = "out_relu"
-
-        grad_model = tf.keras.models.Model(
-            inputs=model.input,
-            outputs=[model.get_layer(last_conv_layer).output, model.output]
-        )
-
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
-            pred_index = tf.argmax(predictions[0])
-            class_channel = predictions[:, pred_index]
-
-        grads = tape.gradient(class_channel, conv_outputs)
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        conv_outputs = conv_outputs[0]
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-        heatmap = tf.squeeze(heatmap)
-        heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
-        heatmap = heatmap.numpy()
-
-        heatmap = cv2.resize(heatmap, (224, 224))
-        heatmap = np.uint8(255 * heatmap)
-        heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-        # Get original image
-        original = np.uint8(img_array[0] * 255)
-        original_bgr = cv2.cvtColor(original, cv2.COLOR_RGB2BGR)
-        superimposed = cv2.addWeighted(original_bgr, 0.6, heatmap_color, 0.4, 0)
-        superimposed_rgb = cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB)
-
-        return Image.fromarray(superimposed_rgb)
-    except Exception:
-        return None
-
-
-# ─── Session State ─────────────────────────────────────────────────────────────
-if "model" not in st.session_state:
-    st.session_state.model = None
-
-if "model_loaded" not in st.session_state:
-    st.session_state.model_loaded = False
-
-if "model_path" not in st.session_state:
-    st.session_state.model_path = DEFAULT_MODEL_PATH
-
-import tensorflow as tf
-
-if not st.session_state.model_loaded:
-    if os.path.exists(DEFAULT_MODEL_PATH):
-        with st.spinner("🔄 Loading default model..."):
-            model = load_model(DEFAULT_MODEL_PATH)
-            if model:
-                st.session_state.model = model
-                st.session_state.model_loaded = True
-    else:
-        st.warning("⚠️ Default model not found in app directory.")
-
-
-# ─── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## 🌿 PlantCare AI")
-    st.markdown("---")
-
-    st.markdown("### ⚙️ Model Setup")
-    model_path_input = st.text_input(
-    "Model File Path (.keras)",
-    value=DEFAULT_MODEL_PATH,   # 👈 auto-filled
+def make_gradcam(img_array, model):
+    grad_model = tf.keras.models.Model(
+        [model.inputs],
+        [model.get_layer(LAST_CONV).output, model.output]
     )
+    with tf.GradientTape() as tape:
+        conv_out, preds = grad_model(img_array)
+        idx     = tf.argmax(preds[0])
+        channel = preds[:, idx]
+    grads  = tape.gradient(channel, conv_out)
+    pooled = tf.reduce_mean(grads, axis=(0, 1, 2))
+    conv_out = conv_out[0]
+    heatmap  = conv_out @ pooled[..., tf.newaxis]
+    heatmap  = tf.squeeze(heatmap)
+    heatmap  = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
+    return heatmap.numpy()
 
-    if st.button("🔄 Load Model"):
-        if model_path_input and os.path.exists(model_path_input):
-            with st.spinner("Loading model..."):
-                st.session_state.model_path = model_path_input
-                st.session_state.model_path_input = model_path_input
-                import tensorflow as tf
-                try:
-                    model = load_model(model_path_input)
-                    if model:
-                        st.session_state.model = model
-                        st.session_state.model_loaded = True
-                        st.success("✅ Model loaded!")
-                    st.success("✅ Model loaded!")
-                except Exception as e:
-                    st.error(f"❌ {e}")
-        elif model_path_input:
-            st.error("❌ File not found.")
-        else:
-            st.warning("Please enter a model path.")
+def overlay_gradcam(pil_img, heatmap, alpha=0.4):
+    img = np.array(pil_img.resize(IMAGE_SIZE))
+    h   = cv2.resize(heatmap, IMAGE_SIZE)
+    h   = np.uint8(255 * h)
+    h   = cv2.applyColorMap(h, cv2.COLORMAP_JET)
+    h   = cv2.cvtColor(h, cv2.COLOR_BGR2RGB)
+    return cv2.addWeighted(img, 1 - alpha, h, alpha, 0)
 
-    # Model status
-    if st.session_state.model_loaded:
-        st.markdown("""
-        <div style='background:rgba(82,183,136,0.2);border-radius:8px;padding:0.7rem 1rem;margin-top:0.5rem;'>
-            <span style='color:#52b788;font-weight:600;'>● Model Active</span>
-        </div>""", unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div style='background:rgba(255,100,100,0.15);border-radius:8px;padding:0.7rem 1rem;margin-top:0.5rem;'>
-            <span style='color:#ff7070;font-weight:600;'>○ No Model Loaded</span>
-        </div>""", unsafe_allow_html=True)
+# ──────────────────────────────────────────────────────────────
+# HTML helpers
+# ──────────────────────────────────────────────────────────────
+def tips_html(items, dot_class, symbol):
+    rows = "".join(
+        f'<div class="tip-item">'
+        f'<div class="tip-dot {dot_class}">{symbol}</div>'
+        f'<div>{t}</div></div>'
+        for t in items
+    )
+    return rows
 
-    st.markdown("---")
-    st.markdown("### 🎛️ Settings")
-    conf_threshold = st.slider("Confidence Threshold (%)", 0, 100, 50,
-                                help="Only show results above this confidence")
-    show_gradcam = st.checkbox("Show Grad-CAM Heatmap", value=True,
-                                help="Visualize what the model focuses on")
-    top_k = st.selectbox("Top Predictions to Show", [3, 5, 10], index=1)
+# ══════════════════════════════════════════════════════════════
+# UI START
+# ══════════════════════════════════════════════════════════════
 
-    st.markdown("---")
-    st.markdown("### 📊 Session Stats")
-    total = len(st.session_state.history)
-    diseases = sum(1 for h in st.session_state.history if not h["healthy"])
-    healthy = total - diseases
-
-    col1s, col2s = st.columns(2)
-    with col1s:
-        st.metric("Total", total)
-    with col2s:
-        st.metric("Diseases", diseases)
-
-    if total > 0:
-        st.progress(healthy / total if total else 0)
-        st.caption(f"{healthy} healthy · {diseases} diseased")
-
-    if st.button("🗑️ Clear History"):
-        st.session_state.history = []
-        st.rerun()
-
-    st.markdown("---")
-    st.markdown("### ℹ️ About")
-    st.markdown("""
-    <div style='font-size:0.82rem;opacity:0.85;line-height:1.6;'>
-    MobileNetV2 fine-tuned on PlantVillage dataset.<br>
-    <b>38 classes</b> · 14 plant species<br>
-    Architecture: MobileNetV2 + custom head<br>
-    Training: 3-phase fine-tuning
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ─── Main Content ──────────────────────────────────────────────────────────────
-st.sidebar.write("Model path:", model_path_input)
-st.sidebar.write("Exists:", os.path.exists(model_path_input))
-# Header
+# Hero
 st.markdown("""
-<div class="app-header">
-    <div style="position:relative;z-index:1;">
-        <p class="header-title">🌿 PlantCare AI</p>
-        <p class="header-subtitle">AI-powered plant disease detection for farmers, agronomists & researchers</p>
-        <span class="header-badge">MobileNetV2 · 38 Disease Classes · PlantVillage Dataset</span>
-    </div>
+<div class="hero">
+  <span class="emoji">🌾</span>
+  <h1>PlantCare AI</h1>
+  <p>Take a photo of your crop leaf — we will tell you what is wrong and how to fix it</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Main tabs
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Diagnose", "📋 Disease Library", "📈 History", "💡 How to Use"])
+# Upload
+uploaded = st.file_uploader(
+    "📷  Upload a clear photo of one leaf (JPG or PNG)",
+    type=["jpg", "jpeg", "png"],
+)
 
-# ─────────────────────────── TAB 1: DIAGNOSE ───────────────────────────────────
-with tab1:
-    col_upload, col_result = st.columns([1, 1.3], gap="large")
+if uploaded is None:
+    st.markdown("""
+    <div style="text-align:center; padding:2rem 0; color:#aaa; font-size:0.95rem;">
+        👆 Upload a clear photo of a single leaf to get your result.<br>
+        <small>Tip: Good lighting and a steady hand gives the best results.</small>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown('<div class="footer">PlantCare AI• AI Crop Disease Checker • Always confirm with your local agriculture officer before buying medicines.</div>', unsafe_allow_html=True)
+    st.stop()
 
-    with col_upload:
-        st.markdown("#### 📸 Upload Leaf Image")
-        uploaded_file = st.file_uploader(
-            "Drag & drop or click to browse",
-            type=["jpg", "jpeg", "png", "webp"],
-            help="Upload a clear photo of the plant leaf. Best results with close-up shots."
+# ── Load & predict ─────────────────────────────────────────
+pil_image = Image.open(uploaded).convert("RGB")
+
+with st.spinner("🔍 Analysing your leaf — please wait..."):
+    try:
+        model = load_model()
+    except Exception as e:
+        st.error(
+            f"❌ Model file **{MODEL_PATH}** not found in this folder.\n\n"
+            f"Make sure the model file is in the same folder as `app.py`.\n\n`{e}`"
         )
+        st.stop()
 
-        if uploaded_file:
-            img = Image.open(uploaded_file)
-            st.image(img, caption="Uploaded Image", use_container_width=True)
+    img_arr    = preprocess(pil_image)
+    preds      = model.predict(img_arr, verbose=0)[0]
+    pred_idx   = int(np.argmax(preds))
+    confidence = float(preds[pred_idx]) * 100
 
-            # Image info
-            st.markdown(f"""
-            <div style='font-size:0.8rem;color:#888;margin-top:0.3rem;'>
-            📐 {img.width}×{img.height}px · {uploaded_file.type} · {uploaded_file.size/1024:.1f} KB
-            </div>""", unsafe_allow_html=True)
+    pred_class = CLASS_NAMES[pred_idx]
+    info       = DISEASE_INFO.get(pred_class)
 
-        else:
-            # Placeholder
-            st.markdown("""
-            <div class="upload-section">
-                <div style='font-size:3rem;'>🍃</div>
-                <div style='font-size:1rem;color:#666;margin-top:0.5rem;'>Upload a plant leaf image</div>
-                <div style='font-size:0.8rem;color:#aaa;margin-top:0.3rem;'>JPG, PNG, WEBP supported</div>
-            </div>
-            """, unsafe_allow_html=True)
+    if info is None:
+        st.error("Detected class not found in knowledge base. Please check CLASS_NAMES order.")
+        st.stop()
 
-        # Tips
-        with st.expander("📸 Photography Tips for Best Results"):
-            st.markdown("""
-            - **Good lighting**: Natural daylight or bright indoor light
-            - **Close-up shot**: Fill the frame with the leaf
-            - **Sharp focus**: Avoid blurry images
-            - **Leaf only**: Minimize background distractions
-            - **Show symptoms**: Capture the affected areas clearly
-            """)
+    severity = info["severity"]
+    meta     = SEVERITY_META[severity]
 
-        if uploaded_file:
-            analyze_btn = st.button("🔬 Analyze Leaf", use_container_width=True)
-        else:
-            analyze_btn = False
+    heatmap     = make_gradcam(img_arr, model)
+    overlay_img = overlay_gradcam(pil_image, heatmap)
 
-    with col_result:
-        st.markdown("#### 🧪 Diagnosis Results")
+# ── Images side by side ────────────────────────────────────
+col1, col2 = st.columns(2)
+with col1:
+    st.markdown("**📷 Your Leaf Photo**")
+    st.image(pil_image, use_container_width=True)
+with col2:
+    st.markdown("**🔬 Disease Location on Leaf**")
+    st.image(overlay_img, use_container_width=True)
+    st.caption("🔴 Red/orange areas = where the disease is concentrated")
 
-        if not uploaded_file:
-            st.info("Upload a leaf image to get started.")
+st.markdown("<br>", unsafe_allow_html=True)
 
-        elif not st.session_state.model_loaded:
-            st.warning("⚠️ No model loaded. Please provide your `.keras` model path.")
-            st.markdown("""
-            <div style='background:#fff8e1;border-radius:12px;padding:1.2rem;border:1.5px solid #e9c46a;'>
-                <b>Quick Setup:</b><br>
-                1. Open the sidebar (left panel)<br>
-                2. Enter the path to your <code>model.keras</code> file<br>
-                3. Click <b>Load Model</b><br>
-                4. Come back and click <b>Analyze Leaf</b>
-            </div>
-            """, unsafe_allow_html=True)
+# ── Result card ────────────────────────────────────────────
+bar_color = meta["bar"]
+bar_w     = round(confidence)
 
-        elif analyze_btn:
-            img = Image.open(uploaded_file)
-            img_array = preprocess_image(img)
-
-            with st.spinner("🔍 Analyzing leaf..."):
-                progress = st.progress(0)
-                for i in range(100):
-                    time.sleep(0.008)
-                    progress.progress(i + 1)
-
-                results, all_preds = predict(st.session_state.model, img_array)
-                top_label, top_conf = results[0]
-                plant, condition = format_class_name(top_label)
-                is_healthy = "healthy" in top_label.lower()
-                info = DISEASE_INFO.get(top_label, DEFAULT_DISEASE_INFO)
-                severity = info["severity"]
-                sev_color = SEVERITY_COLORS.get(severity, "#888")
-
-            # Save to history
-            st.session_state.history.append({
-                "filename": uploaded_file.name,
-                "label": top_label,
-                "plant": plant,
-                "condition": condition,
-                "confidence": top_conf,
-                "healthy": is_healthy,
-                "time": time.strftime("%H:%M:%S"),
-            })
-
-            # ── Result banner ──
-            if is_healthy:
-                st.markdown(f"""
-                <div class="healthy-banner">
-                    <div style='font-size:2.5rem;'>✅</div>
-                    <div style='font-family:Playfair Display,serif;font-size:1.5rem;font-weight:700;color:#1a3a2a;'>{plant}</div>
-                    <div style='color:#2d6a4f;font-weight:500;margin-top:0.3rem;'>Healthy Plant — No Disease Detected</div>
-                    <div style='font-size:0.85rem;color:#555;margin-top:0.5rem;'>Confidence: <b>{top_conf:.1f}%</b></div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div class="disease-banner">
-                    <div style='font-size:2.5rem;'>{info['icon']}</div>
-                    <div style='font-family:Playfair Display,serif;font-size:1.5rem;font-weight:700;color:#7d0000;'>{plant}</div>
-                    <div style='color:#c1121f;font-weight:600;margin-top:0.3rem;'>{condition}</div>
-                    <div style='font-size:0.85rem;color:#555;margin-top:0.5rem;'>Confidence: <b>{top_conf:.1f}%</b></div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # ── Confidence bar ──
-            conf_color = get_conf_color(top_conf)
-            st.markdown(f"""
-            <div class="result-label">Confidence Level</div>
-            <div class="conf-bar-bg">
-                <div class="conf-bar-fill" style="width:{top_conf:.1f}%;background:{conf_color};"></div>
-            </div>
-            <div style='text-align:right;font-size:0.85rem;color:{conf_color};font-weight:600;margin-top:0.2rem;'>{top_conf:.1f}%</div>
-            """, unsafe_allow_html=True)
-
-            # ── Disease Info ──
-            if not is_healthy:
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(f"""
-                <span class="severity-badge" style="background:{sev_color};">
-                    ⚠ {severity} Severity
-                </span>
-                """, unsafe_allow_html=True)
-
-                st.markdown(f"""
-                <div class="info-box">
-                    <h4>📖 About this Disease</h4>
-                    <p style='font-size:0.9rem;color:#444;margin:0;'>{info['description']}</p>
-                </div>
-                """, unsafe_allow_html=True)
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    treatment_html = "".join(f"<li>{t}</li>" for t in info["treatment"])
-                    st.markdown(f"""
-                    <div class="info-box">
-                        <h4>💊 Treatment</h4>
-                        <ul>{treatment_html}</ul>
-                    </div>""", unsafe_allow_html=True)
-                with c2:
-                    prevention_html = "".join(f"<li>{p}</li>" for p in info["prevention"])
-                    st.markdown(f"""
-                    <div class="info-box">
-                        <h4>🛡️ Prevention</h4>
-                        <ul>{prevention_html}</ul>
-                    </div>""", unsafe_allow_html=True)
-
-            # ── Top K Predictions ──
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown(f"**Top {top_k} Predictions**")
-            for label, conf in results[:top_k]:
-                if conf < conf_threshold:
-                    continue
-                p, c = format_class_name(label)
-                bar_w = int(conf)
-                bar_color = "#52b788" if "healthy" in label else "#e76f51"
-                healthy_tag = "🟢" if "healthy" in label else "🔴"
-                st.markdown(f"""
-                <div class="pred-row">
-                    <div style='width:22px;text-align:center;'>{healthy_tag}</div>
-                    <div class="pred-name"><b>{p}</b><br><span style='color:#888;font-size:0.78rem;'>{c}</span></div>
-                    <div style='flex:1;'>
-                        <div class="conf-bar-bg" style='height:8px;'>
-                            <div class="conf-bar-fill" style="width:{bar_w}%;background:{bar_color};"></div>
-                        </div>
-                    </div>
-                    <div class="pred-pct">{conf:.1f}%</div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            # ── Grad-CAM ──
-            if show_gradcam:
-                st.markdown("<br>**🔥 Grad-CAM Visualization**")
-                st.caption("Highlights regions the model focused on for its prediction.")
-                img = Image.open(uploaded_file)
-                img_arr = preprocess_image(img)
-                gradcam_img = make_gradcam(st.session_state.model, img_arr)
-                if gradcam_img:
-                    c1g, c2g = st.columns(2)
-                    with c1g:
-                        st.image(img.resize((224, 224)), caption="Original", use_container_width=True)
-                    with c2g:
-                        st.image(gradcam_img, caption="Grad-CAM Heatmap", use_container_width=True)
-                else:
-                    st.info("Grad-CAM not available for this model configuration.")
-
-            # ── Disclaimer ──
-            st.markdown("""
-            <div style='background:#fffbea;border-radius:10px;padding:0.9rem 1.2rem;margin-top:1rem;border:1.5px solid #e9c46a;font-size:0.82rem;color:#665500;'>
-            ⚠️ <b>Disclaimer:</b> This AI tool is for informational purposes only. For critical crop decisions, 
-            always consult a certified agricultural expert or plant pathologist.
-            </div>
-            """, unsafe_allow_html=True)
-
-
-# ─────────────────────────── TAB 2: DISEASE LIBRARY ───────────────────────────
-with tab2:
-    st.markdown("### 📋 Plant Disease Reference Library")
-    st.markdown("Browse all 38 plant conditions that this model can detect.")
-
-    # Summary stats
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown("""<div class="stat-card"><div class="stat-number">38</div><div class="stat-label">Total Classes</div></div>""", unsafe_allow_html=True)
-    with col2:
-        st.markdown("""<div class="stat-card"><div class="stat-number">14</div><div class="stat-label">Plant Species</div></div>""", unsafe_allow_html=True)
-    with col3:
-        st.markdown("""<div class="stat-card"><div class="stat-number">26</div><div class="stat-label">Disease Types</div></div>""", unsafe_allow_html=True)
-    with col4:
-        st.markdown("""<div class="stat-card"><div class="stat-number">54K+</div><div class="stat-label">Training Images</div></div>""", unsafe_allow_html=True)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Filter
-    col_filter1, col_filter2 = st.columns(2)
-    with col_filter1:
-        plants = sorted(set(c.split("___")[0].replace("_", " ") for c in CLASS_LABELS))
-        plant_filter = st.selectbox("Filter by Plant", ["All"] + plants)
-    with col_filter2:
-        status_filter = st.selectbox("Filter by Status", ["All", "Diseased", "Healthy"])
-
-    # Display classes
-    filtered = CLASS_LABELS.copy()
-    if plant_filter != "All":
-        filtered = [c for c in filtered if c.split("___")[0].replace("_", " ") == plant_filter]
-    if status_filter == "Healthy":
-        filtered = [c for c in filtered if "healthy" in c]
-    elif status_filter == "Diseased":
-        filtered = [c for c in filtered if "healthy" not in c]
-
-    for label in filtered:
-        plant, condition = format_class_name(label)
-        is_h = "healthy" in label
-        info = DISEASE_INFO.get(label, DEFAULT_DISEASE_INFO)
-        border = "#52b788" if is_h else SEVERITY_COLORS.get(info["severity"], "#888")
-        icon = "✅" if is_h else info["icon"]
-
-        with st.expander(f"{icon} {plant} — {condition}"):
-            c1, c2 = st.columns([1, 1])
-            with c1:
-                st.markdown(f"**Status:** {'🟢 Healthy' if is_h else '🔴 Diseased'}")
-                if not is_h:
-                    sev = info["severity"]
-                    st.markdown(f"**Severity:** <span style='color:{SEVERITY_COLORS.get(sev,'#888')};font-weight:600'>{sev}</span>", unsafe_allow_html=True)
-                st.markdown(f"**Description:** {info['description']}")
-            with c2:
-                if not is_h:
-                    st.markdown("**Treatment:**")
-                    for t in info["treatment"]:
-                        st.markdown(f"• {t}")
-                    st.markdown("**Prevention:**")
-                    for p in info["prevention"]:
-                        st.markdown(f"• {p}")
-                else:
-                    st.markdown("This plant appears healthy. Maintain current care practices.")
-
-    st.markdown(f"<div style='text-align:center;color:#aaa;font-size:0.85rem;margin-top:1rem;'>Showing {len(filtered)} of {len(CLASS_LABELS)} classes</div>", unsafe_allow_html=True)
-
-
-# ─────────────────────────── TAB 3: HISTORY ───────────────────────────────────
-with tab3:
-    st.markdown("### 📈 Analysis History")
-
-    if not st.session_state.history:
-        st.info("No analyses yet. Upload a leaf image in the **Diagnose** tab to get started.")
-    else:
-        # Summary
-        total = len(st.session_state.history)
-        diseased = sum(1 for h in st.session_state.history if not h["healthy"])
-        healthy = total - diseased
-        avg_conf = np.mean([h["confidence"] for h in st.session_state.history])
-
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown(f"""<div class="stat-card"><div class="stat-number">{total}</div><div class="stat-label">Total Analyzed</div></div>""", unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"""<div class="stat-card"><div class="stat-number">{healthy}</div><div class="stat-label">Healthy</div></div>""", unsafe_allow_html=True)
-        with c3:
-            st.markdown(f"""<div class="stat-card"><div class="stat-number">{diseased}</div><div class="stat-label">Diseased</div></div>""", unsafe_allow_html=True)
-        with c4:
-            st.markdown(f"""<div class="stat-card"><div class="stat-number">{avg_conf:.0f}%</div><div class="stat-label">Avg Confidence</div></div>""", unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # History list
-        for i, h in enumerate(reversed(st.session_state.history)):
-            icon = "✅" if h["healthy"] else "🔴"
-            color = "#52b788" if h["healthy"] else "#c1121f"
-            st.markdown(f"""
-            <div class="history-item">
-                <div style='font-size:1.4rem;'>{icon}</div>
-                <div style='flex:1;'>
-                    <div style='font-weight:600;'>{h["plant"]} — {h["condition"]}</div>
-                    <div style='font-size:0.8rem;color:#888;'>{h["filename"]} · {h["time"]}</div>
-                </div>
-                <div style='font-weight:700;color:{color};font-size:1rem;'>{h["confidence"]:.1f}%</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Export
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("📥 Export History as CSV"):
-            import csv
-            import io as sio
-            output = sio.StringIO()
-            writer = csv.DictWriter(output, fieldnames=["filename", "plant", "condition", "confidence", "healthy", "time"])
-            writer.writeheader()
-            writer.writerows(st.session_state.history)
-            st.download_button(
-                "Download CSV",
-                data=output.getvalue(),
-                file_name="plantcare_history.csv",
-                mime="text/csv"
-            )
-
-
-# ─────────────────────────── TAB 4: HOW TO USE ────────────────────────────────
-with tab4:
-    st.markdown("### 💡 How to Use PlantGuard AI")
-
-    st.markdown("""
-    <div class="result-card">
-    <div class="result-title">🚀 Quick Start Guide</div>
+st.markdown(f"""
+<div class="result-card {meta['card']}">
+    <span class="badge {meta['badge']}">{meta['label']}</span>
+    <div class="crop-name">🌿 {info['crop']}</div>
+    <div class="disease-name">{info['disease']}</div>
+    <div class="confidence">The AI is <b>{confidence:.1f}%</b> confident in this result</div>
+    <div class="conf-bar-bg" style="margin-top:8px;">
+        <div class="conf-bar-fill" style="width:{bar_w}%; background:{bar_color};"></div>
     </div>
-    """, unsafe_allow_html=True)
+    <p style="margin-top:1rem; font-size:0.97rem; line-height:1.7; color:#444;">{info['what']}</p>
+</div>
+""", unsafe_allow_html=True)
 
-    steps = [
-        ("1️⃣", "Load Your Model", "In the sidebar, enter the full path to your trained `.h5` model file (e.g., `/path/to/model.keras`) and click **Load Model**."),
-        ("2️⃣", "Upload a Leaf Image", "Go to the **Diagnose** tab, upload a clear photo of the plant leaf you want to analyze. Supported formats: JPG, PNG, WEBP."),
-        ("3️⃣", "Analyze", "Click **Analyze Leaf** and wait for the AI to process the image. Results appear within seconds."),
-        ("4️⃣", "Read the Diagnosis", "The app shows the detected plant, disease (or healthy status), confidence level, and detailed treatment/prevention recommendations."),
-        ("5️⃣", "View Grad-CAM", "Enable **Show Grad-CAM Heatmap** in settings to see which parts of the leaf the model focused on."),
-        ("6️⃣", "Track History", "All your analyses are saved in the **History** tab. You can export them as CSV for record-keeping."),
-    ]
-
-    for num, title, desc in steps:
+# ── Healthy branch ─────────────────────────────────────────
+if severity == "healthy":
+    if info["prevention"]:
         st.markdown(f"""
-        <div style='display:flex;gap:1rem;margin-bottom:1.2rem;align-items:flex-start;'>
-            <div style='font-size:1.8rem;min-width:40px;'>{num}</div>
-            <div>
-                <div style='font-family:Playfair Display,serif;font-size:1.1rem;font-weight:700;color:#1a3a2a;'>{title}</div>
-                <div style='font-size:0.9rem;color:#555;margin-top:0.2rem;'>{desc}</div>
-            </div>
+        <div class="tip-section">
+            <h3>💡 Tips to Keep Your Crop Healthy</h3>
+            {tips_html(info['prevention'], 'dot-green', '✓')}
         </div>
         """, unsafe_allow_html=True)
 
-    st.markdown("---")
+# ── Disease branch ─────────────────────────────────────────
+else:
+    if info["signs"]:
+        st.markdown(f"""
+        <div class="tip-section">
+            <h3>🔎 Signs You Will See on Your Crop</h3>
+            {tips_html(info['signs'], 'dot-red', '!')}
+        </div>
+        """, unsafe_allow_html=True)
 
-    col_a, col_b = st.columns(2)
-    with col_a:
+    if info["causes"]:
+        st.markdown(f"""
+        <div class="tip-section">
+            <h3>🌧️ Why This is Happening</h3>
+            {tips_html(info['causes'], 'dot-yellow', '?')}
+        </div>
+        """, unsafe_allow_html=True)
+
+    if info["cure"]:
+        st.markdown(f"""
+        <div class="tip-section" style="border-left:4px solid #1a6985;">
+            <h3>💊 What To Do Right Now — Step by Step</h3>
+            {tips_html(info['cure'], 'dot-blue', '→')}
+        </div>
+        """, unsafe_allow_html=True)
+
+    if info["prevention"]:
+        st.markdown(f"""
+        <div class="tip-section">
+            <h3>🛡️ How to Prevent This Next Season</h3>
+            {tips_html(info['prevention'], 'dot-green', '✓')}
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Advisory note for serious cases
+    if severity in ("high", "critical"):
         st.markdown("""
-        <div class="info-box">
-            <h4>✅ Best Practices</h4>
-            <ul>
-                <li>Use close-up, well-lit photos</li>
-                <li>Focus on the most affected area</li>
-                <li>Avoid images with heavy shadows</li>
-                <li>Capture both sides of the leaf</li>
-                <li>Use multiple images for cross-validation</li>
-            </ul>
+        <div class="alert-box">
+            <b>⚠️ Important Advisory:</b> This is a serious crop disease.
+            Please contact your local Agriculture Officer, Krishi Vigyan Kendra (KVK),
+            or call the Kisan Call Centre at <b>1800-180-1551 (free call)</b>
+            for guidance on the right medicines available in your area.
         </div>
         """, unsafe_allow_html=True)
 
-    with col_b:
-        st.markdown("""
-        <div class="info-box">
-            <h4>⚠️ Limitations</h4>
-            <ul>
-                <li>Trained on 38 specific disease classes</li>
-                <li>May not generalize to rare diseases</li>
-                <li>Image quality significantly affects accuracy</li>
-                <li>Results are probabilistic, not definitive</li>
-                <li>Always consult an expert for critical decisions</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <div style='background:linear-gradient(120deg,#d8f3dc,#b7e4c7);border-radius:14px;padding:1.5rem 2rem;margin-top:1rem;'>
-        <div style='font-family:Playfair Display,serif;font-size:1.1rem;font-weight:700;color:#1a3a2a;'>🌾 Supported Crops & Diseases</div>
-        <div style='font-size:0.88rem;color:#2d6a4f;margin-top:0.5rem;'>
-        Apple (4) · Blueberry · Cherry (2) · Corn/Maize (4) · Grape (4) · Orange · 
-        Peach (2) · Bell Pepper (2) · Potato (3) · Raspberry · Soybean · Squash · 
-        Strawberry (2) · Tomato (10)
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+# ── Footer ─────────────────────────────────────────────────
+st.markdown("""
+<div class="footer">
+    PlantCare AI 🌾 • Powered by AI (MobileNetV2) trained on PlantVillage Dataset •
+    38 crop diseases supported • Always confirm with your local agriculture expert before purchasing medicines.
+</div>
+""", unsafe_allow_html=True)
