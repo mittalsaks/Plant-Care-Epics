@@ -534,22 +534,48 @@ def preprocess(pil_img):
     arr = np.array(img, dtype=np.float32) / 255.0
     return np.expand_dims(arr, axis=0)
 
-def make_gradcam(img_array, model):
-    grad_model = tf.keras.models.Model(
-        [model.inputs],
-        [model.get_layer(LAST_CONV).output, model.output]
-    )
-    with tf.GradientTape() as tape:
-        conv_out, preds = grad_model(img_array)
-        idx     = tf.argmax(preds[0])
-        channel = preds[:, idx]
-    grads  = tape.gradient(channel, conv_out)
-    pooled = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_out = conv_out[0]
-    heatmap  = conv_out @ pooled[..., tf.newaxis]
-    heatmap  = tf.squeeze(heatmap)
-    heatmap  = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-8)
-    return heatmap.numpy()
+import tensorflow as tf
+import numpy as np
+
+def make_gradcam(img_array, model, last_conv_layer_name=None):
+    try:
+        # Ensure batch dimension
+        if len(img_array.shape) == 3:
+            img_array = np.expand_dims(img_array, axis=0)
+
+        # Auto-detect last conv layer if not given
+        if last_conv_layer_name is None:
+            for layer in reversed(model.layers):
+                if "conv" in layer.name.lower():
+                    last_conv_layer_name = layer.name
+                    break
+
+        grad_model = tf.keras.models.Model(
+            [model.inputs],
+            [model.get_layer(last_conv_layer_name).output, model.output]
+        )
+
+        with tf.GradientTape() as tape:
+            conv_outputs, preds = grad_model(img_array)
+            idx = tf.argmax(preds[0])   # ✅ FIX HERE
+            channel = preds[:, idx]     # ✅ now valid
+
+        grads = tape.gradient(channel, conv_outputs)
+
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+        conv_outputs = conv_outputs[0]
+
+        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        heatmap = tf.squeeze(heatmap)
+
+        heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+
+        return heatmap.numpy()
+
+    except Exception as e:
+        st.error(f"GradCAM Error: {e}")
+        return None
 
 def overlay_gradcam(pil_img, heatmap, alpha=0.4):
     img = np.array(pil_img.resize(IMAGE_SIZE))
