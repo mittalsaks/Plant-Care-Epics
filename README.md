@@ -85,10 +85,8 @@ plant_disease_app/
 streamlit run app.py
 ```
 
-### Streamlit Cloud
-1. Push code to GitHub
-2. Go to [share.streamlit.io](https://share.streamlit.io)
-3. Connect repo and deploy
+### Deployed Link
+https://plantcare-epics-4rjmxmfzmhxikdytqd5f7q.streamlit.app/
 
 ### Docker
 ```dockerfile
