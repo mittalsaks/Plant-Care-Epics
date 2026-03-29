@@ -539,41 +539,58 @@ import numpy as np
 
 def make_gradcam(img_array, model, last_conv_layer_name=None):
     try:
+        import numpy as np
+        import tensorflow as tf
+
         # Ensure batch dimension
         if len(img_array.shape) == 3:
             img_array = np.expand_dims(img_array, axis=0)
 
-        # Auto-detect last conv layer if not given
+        # Auto-detect last conv layer
         if last_conv_layer_name is None:
             for layer in reversed(model.layers):
-                if "conv" in layer.name.lower():
+                if isinstance(layer, tf.keras.layers.Conv2D):
                     last_conv_layer_name = layer.name
                     break
 
+        # Create grad model
         grad_model = tf.keras.models.Model(
-            [model.inputs],
-            [model.get_layer(last_conv_layer_name).output, model.output]
+            inputs=model.input,
+            outputs=[model.get_layer(last_conv_layer_name).output, model.output]
         )
 
+        # Forward pass
         with tf.GradientTape() as tape:
-            conv_outputs, preds = grad_model(img_array)
-            idx = tf.argmax(preds[0])   # ✅ FIX HERE
-            channel = preds[:, idx]     # ✅ now valid
+            conv_outputs, predictions = grad_model(img_array)
 
-        grads = tape.gradient(channel, conv_outputs)
+            # ✅ FIX: ensure tensor
+            predictions = tf.convert_to_tensor(predictions)
 
+            # Get predicted class
+            pred_index = tf.argmax(predictions[0])
+
+            # ✅ FIX: correct indexing
+            class_channel = predictions[0][pred_index]
+
+        # Compute gradients
+        grads = tape.gradient(class_channel, conv_outputs)
+
+        # Pool gradients
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
         conv_outputs = conv_outputs[0]
 
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-        heatmap = tf.squeeze(heatmap)
+        # Weighted sum
+        heatmap = conv_outputs * pooled_grads
+        heatmap = tf.reduce_sum(heatmap, axis=-1)
 
+        # ReLU
         heatmap = tf.maximum(heatmap, 0)
 
+        # Normalize safely
         max_val = tf.reduce_max(heatmap)
         if max_val == 0:
-            return np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[1]))
+            return None
 
         heatmap /= max_val
 
@@ -732,7 +749,7 @@ if severity == "healthy":
         </div>
         """, unsafe_allow_html=True)
 
-        
+
 st.write("Heatmap type:", type(heatmap))
 if heatmap is not None:
     st.write("Heatmap shape:", np.shape(heatmap))
