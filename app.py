@@ -569,7 +569,13 @@ def make_gradcam(img_array, model, last_conv_layer_name=None):
         heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
 
-        heatmap = tf.maximum(heatmap, 0) / tf.reduce_max(heatmap)
+        heatmap = tf.maximum(heatmap, 0)
+
+        max_val = tf.reduce_max(heatmap)
+        if max_val == 0:
+            return np.zeros((IMAGE_SIZE[0], IMAGE_SIZE[1]))
+
+        heatmap /= max_val
 
         return heatmap.numpy()
 
@@ -578,12 +584,39 @@ def make_gradcam(img_array, model, last_conv_layer_name=None):
         return None
 
 def overlay_gradcam(pil_img, heatmap, alpha=0.4):
+    import numpy as np
+    import cv2
+
     img = np.array(pil_img.resize(IMAGE_SIZE))
-    h   = cv2.resize(heatmap, IMAGE_SIZE)
-    h   = np.uint8(255 * h)
-    h   = cv2.applyColorMap(h, cv2.COLORMAP_JET)
-    h   = cv2.cvtColor(h, cv2.COLOR_BGR2RGB)
-    return cv2.addWeighted(img, 1 - alpha, h, alpha, 0)
+
+    # ✅ Handle None case
+    if heatmap is None:
+        return img
+
+    # ✅ Force numpy conversion
+    if not isinstance(heatmap, np.ndarray):
+        heatmap = np.array(heatmap)
+
+    # ✅ Remove extra dimensions safely
+    heatmap = np.squeeze(heatmap)
+
+    # ✅ Prevent invalid shapes
+    if heatmap.ndim != 2:
+        heatmap = heatmap.reshape(heatmap.shape[0], heatmap.shape[1])
+
+    # ✅ Normalize safely
+    if np.max(heatmap) != 0:
+        heatmap = heatmap / np.max(heatmap)
+
+    # ✅ Resize
+    heatmap = cv2.resize(heatmap, IMAGE_SIZE)
+
+    # ✅ Convert to heatmap image
+    heatmap = np.uint8(255 * heatmap)
+    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+
+    return cv2.addWeighted(img, 1 - alpha, heatmap, alpha, 0)
 
 # ──────────────────────────────────────────────────────────────
 # HTML helpers
@@ -655,7 +688,10 @@ with st.spinner("🔍 Analysing your leaf — please wait..."):
     meta     = SEVERITY_META[severity]
 
     heatmap     = make_gradcam(img_arr, model)
-    overlay_img = overlay_gradcam(pil_image, heatmap)
+    if heatmap is not None:
+        overlay_img = overlay_gradcam(pil_image, heatmap)
+    else:
+        overlay_img = np.array(pil_image.resize(IMAGE_SIZE))
 
 # ── Images side by side ────────────────────────────────────
 col1, col2 = st.columns(2)
@@ -696,6 +732,10 @@ if severity == "healthy":
         </div>
         """, unsafe_allow_html=True)
 
+        
+st.write("Heatmap type:", type(heatmap))
+if heatmap is not None:
+    st.write("Heatmap shape:", np.shape(heatmap))
 # ── Disease branch ─────────────────────────────────────────
 else:
     if info["signs"]:
