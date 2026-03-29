@@ -539,9 +539,6 @@ import numpy as np
 
 def make_gradcam(img_array, model, last_conv_layer_name=None):
     try:
-        import numpy as np
-        import tensorflow as tf
-
         # Ensure batch dimension
         if len(img_array.shape) == 3:
             img_array = np.expand_dims(img_array, axis=0)
@@ -549,43 +546,47 @@ def make_gradcam(img_array, model, last_conv_layer_name=None):
         # Auto-detect last conv layer
         if last_conv_layer_name is None:
             for layer in reversed(model.layers):
-                if isinstance(layer, tf.keras.layers.Conv2D):
+                if "conv" in layer.name.lower():
                     last_conv_layer_name = layer.name
                     break
 
-        # Create grad model
         grad_model = tf.keras.models.Model(
             inputs=model.input,
-            outputs=[model.get_layer(last_conv_layer_name).output, model.output]
+            outputs=[
+                model.get_layer(last_conv_layer_name).output,
+                model.output[0]
+            ]
         )
 
-        # Forward pass
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
 
-            predictions = tf.convert_to_tensor(predictions)
+            # ✅ FIX 1: Ensure predictions is tensor (not list)
+            if isinstance(predictions, list):
+                predictions = predictions[0]
 
-            pred_index = tf.argmax(predictions[0]).numpy()   # ✅ FIX
+            # ✅ FIX 2: Get class index safely
+            class_idx = tf.argmax(predictions[0])
 
-            class_channel = predictions[:, pred_index]       # ✅ FIX
+            # ✅ FIX 3: Correct indexing
+            class_channel = predictions[:, class_idx]
 
         # Compute gradients
         grads = tape.gradient(class_channel, conv_outputs)
 
-        # Pool gradients
+        # Mean intensity of gradients
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
 
         conv_outputs = conv_outputs[0]
 
-        # Weighted sum
-        heatmap = conv_outputs * pooled_grads
-        heatmap = tf.reduce_sum(heatmap, axis=-1)
-
-        # ReLU
-        heatmap = tf.maximum(heatmap, 0)
+        # Weighted combination
+        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        heatmap = tf.squeeze(heatmap)
 
         # Normalize safely
+        heatmap = tf.maximum(heatmap, 0)
         max_val = tf.reduce_max(heatmap)
+
         if max_val == 0:
             return None
 
@@ -594,43 +595,69 @@ def make_gradcam(img_array, model, last_conv_layer_name=None):
         return heatmap.numpy()
 
     except Exception as e:
-        st.error(f"GradCAM Error: {e}")
+        st.error(f"❌ GradCAM Error: {e}")
         return None
 
 def overlay_gradcam(pil_img, heatmap, alpha=0.4):
-    import numpy as np
-    import cv2
+    """Overlay GradCAM heatmap on original image with robust error handling."""
 
-    img = np.array(pil_img.resize(IMAGE_SIZE))
-
-    # ✅ Handle None case
+    # ✅ CHECK 1: Heatmap None
     if heatmap is None:
-        return img
+        st.warning("⚠️ GradCAM failed. Showing original image.")
+        return np.array(pil_img.resize(IMAGE_SIZE))
 
-    # ✅ Force numpy conversion
-    if not isinstance(heatmap, np.ndarray):
-        heatmap = np.array(heatmap)
+    try:
+        # ✅ CHECK 2: Convert Tensor → NumPy
+        if isinstance(heatmap, (tf.Tensor, tf.Variable)):
+            heatmap = heatmap.numpy()
 
-    # ✅ Remove extra dimensions safely
-    heatmap = np.squeeze(heatmap)
+        # ✅ CHECK 3: Handle list/tuple (Streamlit serialization issue)
+        if isinstance(heatmap, (list, tuple)):
+            heatmap = np.array(heatmap)
 
-    # ✅ Prevent invalid shapes
-    if heatmap.ndim != 2:
-        heatmap = heatmap.reshape(heatmap.shape[0], heatmap.shape[1])
+        # ✅ Convert to numpy float32
+        heatmap = np.asarray(heatmap, dtype=np.float32)
 
-    # ✅ Normalize safely
-    if np.max(heatmap) != 0:
-        heatmap = heatmap / np.max(heatmap)
+        # ✅ CHECK 4: Ensure 2D
+        if heatmap.ndim > 2:
+            heatmap = heatmap.squeeze()
 
-    # ✅ Resize
-    heatmap = cv2.resize(heatmap, IMAGE_SIZE)
+        if heatmap.ndim != 2:
+            st.error(f"❌ Invalid heatmap shape: {heatmap.shape}")
+            return np.array(pil_img.resize(IMAGE_SIZE))
 
-    # ✅ Convert to heatmap image
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+        # ✅ CHECK 5: Normalize safely (0–1)
+        min_val, max_val = np.min(heatmap), np.max(heatmap)
+        if max_val > min_val:
+            heatmap = (heatmap - min_val) / (max_val - min_val)
+        else:
+            heatmap = np.zeros_like(heatmap)
 
-    return cv2.addWeighted(img, 1 - alpha, heatmap, alpha, 0)
+        # ✅ CHECK 6: Ensure contiguous memory (VERY IMPORTANT for OpenCV)
+        heatmap = np.ascontiguousarray(heatmap)
+
+        # ✅ CHECK 7: Resize (IMPORTANT FIX: use width, height correctly)
+        heatmap = cv2.resize(
+            heatmap,
+            (IMAGE_SIZE[1], IMAGE_SIZE[0]),  # (width, height)
+            interpolation=cv2.INTER_LINEAR
+        )
+
+        # ✅ Convert to heatmap colors
+        heatmap = np.uint8(255 * np.clip(heatmap, 0, 1))
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+
+        # ✅ Prepare original image
+        img = np.array(pil_img.resize(IMAGE_SIZE))
+        img = np.asarray(img, dtype=np.uint8)
+
+        # ✅ Final overlay
+        return cv2.addWeighted(img, 1 - alpha, heatmap, alpha, 0)
+
+    except Exception as e:
+        st.error(f"❌ Overlay failed: {e}")
+        return np.array(pil_img.resize(IMAGE_SIZE))
 
 # ──────────────────────────────────────────────────────────────
 # HTML helpers
@@ -701,11 +728,13 @@ with st.spinner("🔍 Analysing your leaf — please wait..."):
     severity = info["severity"]
     meta     = SEVERITY_META[severity]
 
-    heatmap     = make_gradcam(img_arr, model)
-    if heatmap is not None:
-        overlay_img = overlay_gradcam(pil_image, heatmap)
+    heatmap = make_gradcam(img_arr, model)
+
+    if heatmap is None:
+        st.warning("⚠️ Could not generate GradCAM. Showing original image.")
+        overlay_img = pil_image
     else:
-        overlay_img = np.array(pil_image.resize(IMAGE_SIZE))
+        overlay_img = overlay_gradcam(pil_image, heatmap)
 
 # ── Images side by side ────────────────────────────────────
 col1, col2 = st.columns(2)
@@ -746,10 +775,6 @@ if severity == "healthy":
         </div>
         """, unsafe_allow_html=True)
 
-
-st.write("Heatmap type:", type(heatmap))
-if heatmap is not None:
-    st.write("Heatmap shape:", np.shape(heatmap))
 # ── Disease branch ─────────────────────────────────────────
 else:
     if info["signs"]:
