@@ -1,0 +1,14 @@
+{
+  "en": {
+    "upload_label": "Upload a leaf image",
+    "analyzing": "Analyzing image...",
+    "your_photo": "Your Leaf Photo",
+    "disease_area": "Disease Location on Leaf"
+  },
+  "hi": {
+    "upload_label": "पत्ती की फोटो अपलोड करें",
+    "analyzing": "छवि का विश्लेषण किया जा रहा है...",
+    "your_photo": "आपकी पत्ती की फोटो",
+    "disease_area": "पत्ती पर बीमारी का स्थान"
+  }
+}
