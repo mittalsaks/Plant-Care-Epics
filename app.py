@@ -563,14 +563,11 @@ def make_gradcam(img_array, model, last_conv_layer_name=None):
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
 
-            # ✅ FIX: ensure tensor
             predictions = tf.convert_to_tensor(predictions)
 
-            # Get predicted class
-            pred_index = tf.argmax(predictions[0])
+            pred_index = tf.argmax(predictions[0]).numpy()   # ✅ FIX
 
-            # ✅ FIX: correct indexing
-            class_channel = predictions[0][pred_index]
+            class_channel = predictions[:, pred_index]       # ✅ FIX
 
         # Compute gradients
         grads = tape.gradient(class_channel, conv_outputs)
