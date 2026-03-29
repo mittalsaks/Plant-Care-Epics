@@ -1,105 +1,118 @@
-# 🌿 PlantGuard AI — Streamlit App
+# 🌿 PlantCare AI — Streamlit App
 
-A full-featured, production-grade Streamlit application for plant disease detection using your MobileNetV2 model trained on the PlantVillage dataset.
+A polished and user-friendly Streamlit app for plant disease detection and severity guidance. Trained on the PlantVillage dataset model `plantvillage_phase3_epoch25_FINAL.h5`.
 
 ---
 
 ## ✨ Features
 
-| Feature | Description |
-|---|---|
-| 🔍 AI Diagnosis | Upload any leaf image → get instant disease prediction |
-| 📊 Confidence Scores | Visual confidence bars for top-K predictions |
-| 🔥 Grad-CAM | Visualize what the model focuses on |
-| 💊 Treatment Info | Disease-specific treatment & prevention advice |
-| 📋 Disease Library | Browse all 38 detectable classes with filtering |
-| 📈 Session History | Track all analyses, export as CSV |
-| ⚙️ Settings Panel | Threshold control, top-K selector, Grad-CAM toggle |
+- **Leaf Disease Prediction**
+  - Upload or capture a leaf image
+  - Support jpg, jpeg, png, webp, bmp
+  - Model outputs disease class and confidence
+- **Severity Tagging**
+  - `healthy`, `medium`, `high`, `critical`
+  - Advisor text for each severity level
+- **Visual Explanation**
+  - Grad-CAM heatmap overlay on leaf image
+  - Side-by-side input image + attention map
+- **Rich Dashboard UI**
+  - Animated hero and gradient theme
+  - Clean cards, badges, and hover animation
+  - Smaller preview images for better UX
+- **Severity Analytics Page**
+  - Disease/crop selector and details
+  - Severity distribution bar chart
+  - Severity pie chart (with labels)
+  - Diseases per crop bar chart
+  - Severity-by-crop stacked bar chart
+- **Improved UX**
+  - No voice tab in main nav
+  - Clear nav text and visible tab style
+  - Full screen, responsive layout
 
 ---
 
-## 🚀 Setup & Run
+## 🗂️ Repository Structure
 
-### 1. Install dependencies
-```bash
+```
+PlantCare App/
+├── app.py                # Main app entrypoint (nav)
+├── pages/
+│   ├── dashboard.py      # Main detection page
+│   ├── severity.py       # Severity analytics page
+│   ├── voice.py          # Optional voice page (not in main nav)
+├── utils/
+│   ├── theme.py          # CSS + theming
+│   ├── translator.py     # Text dictionary + UI labels
+├── plantvillage_phase3_epoch25_FINAL.h5 # Model file (required)
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 📦 Install & Run
+
+1. Clone repository:
+
+   ```bash
+git clone https://github.com/saumyadwiv/PlantCare-EPICS.git
+cd "PlantCare App"
+```
+
+2. Create virtual environment and install:
+
+   ```bash
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Run the app
-```bash
+3. Launch:
+
+   ```bash
 streamlit run app.py
 ```
 
-### 3. Load your model
-- In the sidebar, enter the path to your `.h5` model file
-- Example: `/path/to/plantvillage_phase3_epoch25_FINAL.h5`
-- Click **Load Model**
+---
+
+## 🌾 Supported Crops & Diseases
+
+- Apple: Apple Scab, Black Rot, Cedar Apple Rust, Healthy
+- Blueberry: Healthy
+- Cherry: Powdery Mildew, Healthy
+- Corn (Maize): Gray Leaf Spot, Common Rust, Northern Leaf Blight, Healthy
+- Grape: Black Rot, Esca, Leaf Blight, Healthy
+- Orange: Citrus Greening (Huanglongbing)
+- Peach: Bacterial Spot, Healthy
+- Pepper (Bell): Bacterial Spot, Healthy
+- Potato: Early Blight, Late Blight, Healthy
+- Raspberry: Healthy
+- Soybean: Healthy
+- Squash: Powdery Mildew
+- Strawberry: Leaf Scorch, Healthy
+- Tomato: Bacterial Spot, Early Blight, Late Blight, Leaf Mold, Septoria Leaf Spot, Spider Mites, Target Spot, Yellow Leaf Curl Virus, Mosaic Virus, Healthy
 
 ---
 
-## 🗂️ File Structure
+## 🛠 Model Notes
 
-```
-plant_disease_app/
-├── app.py              ← Main Streamlit application
-├── requirements.txt    ← Python dependencies
-└── README.md           ← This file
-```
+- Model architecture is based on a MobileNetV2-style head
+- Input: RGB images resized to 224x224
+- Prediction: softmax over 38 classes
+- Class-to-severity maps inside `dashboard.py` constants
 
 ---
 
-## 🌾 Supported Plants & Diseases (38 Classes)
+## 🧾 GitHub & Deploy
 
-| Plant | Conditions |
-|---|---|
-| Apple | Apple Scab, Black Rot, Cedar Apple Rust, Healthy |
-| Blueberry | Healthy |
-| Cherry | Powdery Mildew, Healthy |
-| Corn/Maize | Cercospora Leaf Spot, Common Rust, Northern Leaf Blight, Healthy |
-| Grape | Black Rot, Esca, Leaf Blight, Healthy |
-| Orange | Huanglongbing (Citrus Greening) |
-| Peach | Bacterial Spot, Healthy |
-| Bell Pepper | Bacterial Spot, Healthy |
-| Potato | Early Blight, Late Blight, Healthy |
-| Raspberry | Healthy |
-| Soybean | Healthy |
-| Squash | Powdery Mildew |
-| Strawberry | Leaf Scorch, Healthy |
-| Tomato | Bacterial Spot, Early Blight, Late Blight, Leaf Mold, Septoria Leaf Spot, Spider Mites, Target Spot, Yellow Leaf Curl Virus, Mosaic Virus, Healthy |
-
----
-
-## ⚙️ Model Architecture
-
-- **Base**: MobileNetV2 (ImageNet pretrained)
-- **Head**: GlobalAveragePooling2D → Dense(512) → Dropout(0.5) → Dense(256) → Dropout(0.5) → Dense(128) → Dense(38, softmax)
-- **Input**: 224×224 RGB images, normalized to [0, 1]
-- **Training**: 3-phase fine-tuning on PlantVillage dataset
-
----
-
-## 🖥️ Deployment Options
-
-### Local
-```bash
-streamlit run app.py
-```
-
-### Deployed Link
-https://plantcare-epics-4rjmxmfzmhxikdytqd5f7q.streamlit.app/
-
-### Docker
-```dockerfile
-FROM python:3.10-slim
-WORKDIR /app
-COPY . .
-RUN pip install -r requirements.txt
-EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0"]
-```
+- Remote: `https://github.com/saumyadwiv/PlantCare-EPICS.git`
+- Deployment URL: https://plantcare-epics-4rjmxmfzmhxikdytqd5f7q.streamlit.app/
+- Recommended deploy: Streamlit Cloud (or any Python web host)
 
 ---
 
 ## ⚠️ Disclaimer
 
-This tool is for educational and informational purposes only. For critical agricultural decisions, always consult a certified agronomist or plant pathologist.
+For training or critical farm decisions, consult a local expert. This tool is for guidance and education only.
