@@ -1,6 +1,6 @@
+from camera_module import get_camera_image
 import streamlit as st
 from utils.translator import t
-import streamlit as st
 import tensorflow as tf
 import numpy as np
 from PIL import Image
@@ -688,12 +688,47 @@ def show(lang):
     <p>Take a photo of your crop leaf — we will tell you what is wrong and how to fix it</p>
     </div>
     """, unsafe_allow_html=True)
+        # 👇 YEH STEP 4 YAHA ADD KARO
+    st.markdown(
+        "<p style='text-align:center; margin-bottom:10px;'>Choose how you want to provide leaf image</p>",
+        unsafe_allow_html=True
+    )
 
-    # Upload
-    
+    # 👇 FIR yeh upload/camera wala code
+    st.markdown("### 📤 Upload OR Capture Leaf Image")
+    option = st.radio(
+        "Choose Input Method",
+        ["📁 Upload Image", "📸 Use Camera"],
+        horizontal=True,
+        key="input_method_radio" 
+    )
+
+    uploaded = None
+    camera_img = None
+
+    # 📁 Upload option
+    if option == "📁 Upload Image":
+        uploaded = st.file_uploader(
+            "Upload your crop leaf image",
+            type=["jpg", "jpeg", "png"]
+        )
+
+    # 📸 Camera option
+    else:
+        camera_img = get_camera_image(mode="simple")
+
+    # ❗ FINAL IMAGE SELECT
+    if uploaded is None and camera_img is None:
+        st.info("👆 Please upload or capture an image to continue")
+        st.stop()
+
+    # 📌 Convert to PIL Image
+    if uploaded is not None:
+        pil_image = Image.open(uploaded).convert("RGB")
+    else:
+        pil_image = camera_img
 
     # ── Load & predict ─────────────────────────────────────────
-    pil_image = Image.open(uploaded).convert("RGB")
 
     with st.spinner("🔍 Analysing your leaf — please wait..."):
         try:
