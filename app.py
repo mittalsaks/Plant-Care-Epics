@@ -554,7 +554,7 @@ def make_gradcam(img_array, model, last_conv_layer_name=None):
             inputs=model.input,
             outputs=[
                 model.get_layer(last_conv_layer_name).output,
-                model.output[0]
+                model.output
             ]
         )
 
