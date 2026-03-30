@@ -109,7 +109,7 @@ streamlit run app.py
 
 - Remote: `https://github.com/saumyadwiv/PlantCare-EPICS.git`
 - Deployment URL: https://plantcare-epics-4rjmxmfzmhxikdytqd5f7q.streamlit.app/
-- Recommended deploy: Streamlit Cloud (or any Python web host)
+- Recommended deploy: Streamlit Cloud 
 
 ---
 
