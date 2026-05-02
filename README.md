@@ -191,13 +191,6 @@ For comprehensive plant disease diagnosis, consider combining AI predictions wit
 - **Offline Capability**: Enable offline model inference for areas with limited connectivity
 - **Collaborative Features**: Allow users to contribute new disease images for model improvement
 
-## 👥 Contributors
-
-- **Sakshi Mittal** - Project Lead & Developer
-  - Email: [Your Email]
-  - LinkedIn: [Your LinkedIn]
-  - GitHub: [mittalsaks](https://github.com/mittalsaks)
-
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
